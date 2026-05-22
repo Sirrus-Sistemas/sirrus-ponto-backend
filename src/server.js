@@ -27,7 +27,7 @@ const app = Fastify({
 
 // ─── PLUGINS ──────────────────────────────────────────────────────────────
 await app.register(cors, {
-  origin: process.env.NODE_ENV === 'development' ? true : [/\.seudominio\.com\.br$/],
+  origin: process.env.NODE_ENV === 'development' ? true : (process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',').map(o => o.trim()) : [/\.sirruscompleto\.com\.br$/]),
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   credentials: true,
 });
