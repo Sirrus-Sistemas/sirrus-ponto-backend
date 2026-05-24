@@ -332,10 +332,8 @@ export const EspelhoPontoService = {
       } else if (ocorrencia) {
         status = 'ocorrencia';
         ehDiaTrabalho = true; // compute minutos_previstos even for justified absences
-      } else if (usaEscala) {
-        if (!escalaEntry) {
-          status = 'sem_escala';
-        } else if (escalaEntry.tipo === 'folga') {
+      } else if (usaEscala && escalaEntry) {
+        if (escalaEntry.tipo === 'folga') {
           status = 'folga';
         } else {
           ehDiaTrabalho = true;

@@ -170,7 +170,7 @@ export async function syncLotacao(lotacaoId, mobileEmpresaId) {
 
 // ── Sincronização de Funcionário ─────────────────────────────────────────────
 
-export async function syncFuncionario(funcionarioId) {
+export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEmpresaId, mobileLotacaoId: cachedLotacaoId } = {}) {
   const [func] = await query(
     `SELECT f.id, f.nome, f.cpf, f.email, f.ativo, f.lotacao_id,
             f.pontomobile_id, f.filial_id
@@ -180,12 +180,12 @@ export async function syncFuncionario(funcionarioId) {
   if (!func) throw new Error('Funcionário não encontrado.');
   if (!func.filial_id) throw new Error('Funcionário sem filial não pode ser sincronizado com o mobile.');
 
-  // 1. Garante que a filial está sincronizada
-  const mobileEmpresaId = await syncFilial(func.filial_id);
+  // 1. Usa cache do lote se disponível, senão sincroniza agora
+  const mobileEmpresaId = cachedEmpresaId ?? await syncFilial(func.filial_id);
 
-  // 2. Garante que a lotação está sincronizada (se houver)
-  let mobileLotacaoId = null;
-  if (func.lotacao_id) {
+  // 2. Usa cache do lote se disponível, senão sincroniza agora
+  let mobileLotacaoId = cachedLotacaoId ?? null;
+  if (mobileLotacaoId === null && func.lotacao_id) {
     mobileLotacaoId = await syncLotacao(func.lotacao_id, mobileEmpresaId);
   }
 
@@ -229,7 +229,7 @@ export async function syncFuncionario(funcionarioId) {
 // ── Sincronização em lote de funcionários ────────────────────────────────────
 
 export async function syncAllFuncionarios(empresaId, filialId = null) {
-  let sql = 'SELECT id FROM funcionarios WHERE empresa_id = ? AND ativo = 1';
+  let sql = 'SELECT id, filial_id, lotacao_id FROM funcionarios WHERE empresa_id = ? AND ativo = 1';
   const params = [empresaId];
   if (filialId) {
     sql += ' AND filial_id = ?';
@@ -237,22 +237,50 @@ export async function syncAllFuncionarios(empresaId, filialId = null) {
   }
   const funcs = await query(sql, params);
 
+  // Pré-sincroniza filiais em paralelo
+  const filialIds = [...new Set(funcs.map((f) => f.filial_id).filter(Boolean))];
+  const filialCache = new Map();
+  await Promise.allSettled(
+    filialIds.map(async (fid) => {
+      try { filialCache.set(fid, await syncFilial(fid)); } catch { /* será reportado por funcionário */ }
+    })
+  );
+
+  // Pré-sincroniza lotações em paralelo
+  const lotacaoIds = [...new Set(funcs.map((f) => f.lotacao_id).filter(Boolean))];
+  const lotacaoCache = new Map();
+  await Promise.allSettled(
+    lotacaoIds.map(async (lid) => {
+      const mobileEmpresaId = filialCache.get(funcs.find((f) => f.lotacao_id === lid)?.filial_id);
+      if (mobileEmpresaId) {
+        try { lotacaoCache.set(lid, await syncLotacao(lid, mobileEmpresaId)); } catch { /* idem */ }
+      }
+    })
+  );
+
+  // Sincroniza funcionários em paralelo (lotes de 10 para não sobrecarregar a API mobile)
   let sincronizados = 0;
   const erros = [];
-  for (const f of funcs) {
-    try {
-      await syncFuncionario(f.id);
-      sincronizados++;
-    } catch (e) {
-      erros.push({ funcionario_id: f.id, error: e.message });
+  const CONCURRENCY = 10;
+
+  for (let i = 0; i < funcs.length; i += CONCURRENCY) {
+    const lote = funcs.slice(i, i + CONCURRENCY);
+    const resultados = await Promise.allSettled(lote.map((f) => syncFuncionario(f.id, {
+      mobileEmpresaId: filialCache.get(f.filial_id),
+      mobileLotacaoId: f.lotacao_id ? lotacaoCache.get(f.lotacao_id) : null,
+    })));
+    for (let j = 0; j < lote.length; j++) {
+      if (resultados[j].status === 'fulfilled') sincronizados++;
+      else erros.push({ funcionario_id: lote[j].id, error: resultados[j].reason?.message });
     }
   }
+
   return { sincronizados, erros };
 }
 
 // ── Importar Marcações ───────────────────────────────────────────────────────
 
-export async function pullMarcacoes(filialId, dataInicio, dataFim) {
+export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = null) {
   const [fil] = await query(
     'SELECT id, empresa_id, pontomobile_id FROM filiais WHERE id = ? LIMIT 1',
     [filialId],
@@ -273,14 +301,17 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim) {
 
   const items = Array.isArray(data) ? data : (data?.data ?? []);
 
-  // Auto-sincroniza funcionários da filial que ainda não têm pontomobile_id
+  // Auto-sincroniza funcionários da filial (e lotação, se filtrada) que ainda não têm pontomobile_id
   const naoSincronizados = await query(
-    'SELECT id FROM funcionarios WHERE filial_id = ? AND ativo = 1 AND pontomobile_id IS NULL',
-    [filialId],
+    `SELECT id FROM funcionarios WHERE filial_id = ? AND ativo = 1 AND pontomobile_id IS NULL${lotacaoId ? ' AND lotacao_id = ?' : ''}`,
+    lotacaoId ? [filialId, lotacaoId] : [filialId],
   );
-  for (const f of naoSincronizados) {
-    try { await syncFuncionario(f.id); } catch { /* ignora erros individuais */ }
-    await new Promise((r) => setTimeout(r, 300));
+  if (naoSincronizados.length > 0) {
+    const CONCURRENCY = 10;
+    for (let i = 0; i < naoSincronizados.length; i += CONCURRENCY) {
+      const lote = naoSincronizados.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(lote.map((f) => syncFuncionario(f.id)));
+    }
   }
 
   // Mapa mobileFuncionarioId → { id, fusoHorario } (filtra apenas funcionários da filial)
@@ -292,8 +323,8 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim) {
       `SELECT f.id, f.pontomobile_id, m.fuso_horario
          FROM funcionarios f
          LEFT JOIN municipios m ON m.CODMUNICIPIO = f.municipio_id
-        WHERE f.filial_id = ? AND f.pontomobile_id IN (${placeholders})`,
-      [filialId, ...mobileIds],
+        WHERE f.filial_id = ?${lotacaoId ? ' AND f.lotacao_id = ?' : ''} AND f.pontomobile_id IN (${placeholders})`,
+      lotacaoId ? [filialId, lotacaoId, ...mobileIds] : [filialId, ...mobileIds],
     );
     for (const f of funcs) funcMap.set(Number(f.pontomobile_id), { id: f.id, fusoHorario: f.fuso_horario });
   }
