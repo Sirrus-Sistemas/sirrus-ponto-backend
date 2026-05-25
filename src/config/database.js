@@ -14,7 +14,6 @@ export function getPool() {
       waitForConnections: true,
       charset: 'utf8mb4',
       timezone: '+00:00',
-      namedPlaceholders: true,
       decimalNumbers: true,
     });
   }
