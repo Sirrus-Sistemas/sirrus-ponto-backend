@@ -34,8 +34,8 @@ export default async function municipiosRoutes(fastify) {
       `SELECT CODMUNICIPIO, NOMEMUNICIPIO, ESTADO, fuso_horario
        FROM municipios ${where}
        ORDER BY ESTADO, NOMEMUNICIPIO
-       LIMIT ? OFFSET ?`,
-      [...params, limitNum, offset]
+       LIMIT ${limitNum} OFFSET ${offset}`,
+      params
     );
 
     return successResponse({ rows, total: Number(total), page: pageNum, limit: limitNum });

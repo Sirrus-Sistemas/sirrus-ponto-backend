@@ -159,9 +159,10 @@ export const FuncionarioRepository = {
     const [countResult] = await query(countSql, params);
     const total = countResult.total;
 
-    // Resultado paginado
-    sql += ' ORDER BY f.nome ASC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit, 10), parseInt(offset, 10));
+    // Resultado paginado (LIMIT/OFFSET interpolados pois mysql2 execute() rejeita inteiros bound)
+    const safeLimit = parseInt(limit, 10);
+    const safeOffset = parseInt(offset, 10);
+    sql += ` ORDER BY f.nome ASC LIMIT ${safeLimit} OFFSET ${safeOffset}`;
 
     const rows = await query(sql, params);
 
