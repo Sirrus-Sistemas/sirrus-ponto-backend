@@ -4,7 +4,7 @@ export async function auditar({ acao, tabela, registro_id, dados_anteriores, dad
   try {
     await query(
       `INSERT INTO audit_log
-         (funcionario_id, acao, tabela, registro_id, dados_anteriores, dados_novos, ip_address)
+         (usuario_id, acao, tabela, registro_id, dados_anteriores, dados_novos, ip_address)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         usuario_id ?? null,
