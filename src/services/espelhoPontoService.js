@@ -14,6 +14,39 @@ const TIPO_LABEL = {
   online: 'WEB',
 };
 
+/**
+ * Distribui marcações em 8 slots posicionais respeitando slot_override.
+ * Retorna array esparso de tamanho 8 (null onde não há batida).
+ * Mesma lógica do buildSlots do frontend — mantém consistência entre tela e relatório.
+ *
+ * @param {Array} items  Marcações já formatadas para saída (com campo slot_override).
+ * @returns {Array}      Array de tamanho 8 com nulls nos slots vazios.
+ */
+function applySlotOverride(items) {
+  const hasOverride = items.some(m => m.slot_override !== null && m.slot_override !== undefined);
+  if (!hasOverride) return items; // sem override: retorna ordem cronológica original
+
+  const slots = new Array(8).fill(null);
+  const overridden = items
+    .filter(m => m.slot_override !== null && m.slot_override !== undefined)
+    .sort((a, b) => a.slot_override - b.slot_override);
+  const normal = items
+    .filter(m => m.slot_override === null || m.slot_override === undefined);
+  // normal já vem em ordem cronológica (raw foi ordenado por data_hora ASC)
+
+  for (const m of overridden) {
+    const pos = m.slot_override;
+    if (pos < 8 && slots[pos] === null) slots[pos] = m;
+  }
+
+  let ni = 0;
+  for (let i = 0; i < 8 && ni < normal.length; i++) {
+    if (slots[i] === null) slots[i] = normal[ni++];
+  }
+
+  return slots.filter(m => m !== null);
+}
+
 function fmtTime(val) {
   if (!val) return null;
   return String(val).slice(0, 5); // "HH:MM:SS" → "HH:MM"
@@ -340,7 +373,7 @@ export const EspelhoPontoService = {
 
     const dias = eachCalendarDay(year, month).map((data) => {
       const raw = byDay.get(data) || [];
-      const marcacoes = raw.map((r) => ({
+      const marcacoesRaw = raw.map((r) => ({
         id: r.id,
         data_hora: toIsoDataHoraUtc(r.data_hora),
         data_hora_local: r.data_hora_local || null,
@@ -348,7 +381,11 @@ export const EspelhoPontoService = {
         tipo_label: TIPO_LABEL[r.tipo] || r.tipo,
         motivo_edicao: r.motivo_edicao || null,
         original: Number(r.original),
+        slot_override: r.slot_override !== undefined ? r.slot_override : null,
       }));
+      // Aplica slot_override: garante que relatório e tela usem a mesma ordem de exibição.
+      // raw (order by data_hora) continua sendo usado para cálculos de minutos.
+      const marcacoes = applySlotOverride(marcacoesRaw);
 
       const { minutos, incompleto: intervaloAberto } = minutosTrabalhadosPar(raw);
       const dow = diaSemanaPt(data);

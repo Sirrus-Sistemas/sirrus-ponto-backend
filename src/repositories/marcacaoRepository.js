@@ -29,7 +29,7 @@ export const MarcacaoRepository = {
    */
   async findById(id) {
     const rows = await query(
-      `SELECT id, funcionario_id, data_hora, tipo, motivo_edicao, original
+      `SELECT id, funcionario_id, data_hora, tipo, motivo_edicao, original, slot_override
          FROM marcacoes WHERE id = ? LIMIT 1`,
       [id],
     );
@@ -50,12 +50,13 @@ export const MarcacaoRepository = {
     return rows[0] || null;
   },
 
-  async update(id, { dataHora, motivo, editadoPor }) {
+  async update(id, { dataHora, motivo, editadoPor, slotOverride }) {
     await query(
       `UPDATE marcacoes
-          SET data_hora = ?, motivo_edicao = ?, editado_por = ?, original = 0
+          SET data_hora = ?, motivo_edicao = ?, editado_por = ?, original = 0,
+              slot_override = ?
         WHERE id = ?`,
-      [dataHora, motivo ?? null, editadoPor ?? null, id],
+      [dataHora, motivo ?? null, editadoPor ?? null, slotOverride ?? null, id],
     );
   },
 
@@ -72,6 +73,7 @@ export const MarcacaoRepository = {
               tipo,
               motivo_edicao,
               original,
+              slot_override,
               DATE_FORMAT(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?), '%Y-%m-%d') AS dia
          FROM marcacoes
         WHERE funcionario_id = ?

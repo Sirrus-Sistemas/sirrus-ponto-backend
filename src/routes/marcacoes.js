@@ -184,6 +184,7 @@ export default async function marcacaoRoutes(fastify) {
       properties: {
         data_hora: { type: 'string' },
         motivo: { type: 'string' },
+        slot_override: { type: 'integer', minimum: 0, maximum: 7, nullable: true },
       },
     },
   };
@@ -208,13 +209,14 @@ export default async function marcacaoRoutes(fastify) {
       return reply.code(403).send({ error: 'Acesso negado', message: 'Marcação não pertence à sua empresa' });
     }
 
-    const { data_hora, motivo } = request.body;
+    const { data_hora, motivo, slot_override } = request.body;
     const normalized = data_hora.replace('T', ' ').replace('Z', '').slice(0, 19);
 
     await MarcacaoRepository.update(id, {
       dataHora: normalized,
       motivo: motivo || null,
       editadoPor: request.user.id,
+      slotOverride: slot_override !== undefined ? slot_override : undefined,
     });
     auditar({ acao: 'UPDATE', tabela: 'marcacoes', registro_id: id, dados_anteriores: { data_hora: marcacao.data_hora }, dados_novos: { data_hora: normalized, motivo: motivo || null }, usuario_id: request.user.id, ip: request.ip });
     return successResponse({ id }, 'Batida atualizada');
