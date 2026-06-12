@@ -141,6 +141,8 @@ export default async function marcacaoRoutes(fastify) {
         funcionario_id: { type: 'integer' },
         data_hora: { type: 'string' },
         motivo: { type: 'string' },
+        justificativa: { type: 'string', maxLength: 500 },
+        slot_override: { type: 'integer', minimum: 0, maximum: 7, nullable: true },
       },
     },
   };
@@ -150,7 +152,7 @@ export default async function marcacaoRoutes(fastify) {
       return reply.code(403).send({ error: 'Acesso negado', message: 'Sem permissão para lançar batidas' });
     }
 
-    const { funcionario_id, data_hora, motivo } = request.body;
+    const { funcionario_id, data_hora, motivo, justificativa, slot_override } = request.body;
 
     const func = await FuncionarioRepository.findById(funcionario_id);
     if (!func || func.empresa_id !== request.empresaId) {
@@ -163,8 +165,9 @@ export default async function marcacaoRoutes(fastify) {
     const row = await MarcacaoRepository.insertManual({
       funcionarioId: funcionario_id,
       dataHora: normalized,
-      motivo: motivo || 'ESQUECIMENTO',
+      motivo: justificativa || motivo || 'ESQUECIMENTO',
       editadoPor: request.user.id,
+      slotOverride: slot_override !== undefined ? slot_override : null,
     });
 
     const responseData = {
@@ -172,6 +175,7 @@ export default async function marcacaoRoutes(fastify) {
       data_hora: toIsoDataHoraUtc(row.data_hora),
       tipo: row.tipo,
       motivo_edicao: row.motivo_edicao,
+      slot_override: row.slot_override ?? null,
     };
     auditar({ acao: 'INSERT', tabela: 'marcacoes', registro_id: row.id, dados_anteriores: null, dados_novos: responseData, usuario_id: request.user.id, ip: request.ip });
     return reply.code(201).send(successResponse(responseData, 'Batida lançada'));
@@ -184,6 +188,7 @@ export default async function marcacaoRoutes(fastify) {
       properties: {
         data_hora: { type: 'string' },
         motivo: { type: 'string' },
+        justificativa: { type: 'string', maxLength: 500 },
         slot_override: { type: 'integer', minimum: 0, maximum: 7, nullable: true },
       },
     },
@@ -209,16 +214,16 @@ export default async function marcacaoRoutes(fastify) {
       return reply.code(403).send({ error: 'Acesso negado', message: 'Marcação não pertence à sua empresa' });
     }
 
-    const { data_hora, motivo, slot_override } = request.body;
+    const { data_hora, motivo, justificativa, slot_override } = request.body;
     const normalized = data_hora.replace('T', ' ').replace('Z', '').slice(0, 19);
 
     await MarcacaoRepository.update(id, {
       dataHora: normalized,
-      motivo: motivo || null,
+      motivo: justificativa || motivo || null,
       editadoPor: request.user.id,
       slotOverride: slot_override !== undefined ? slot_override : undefined,
     });
-    auditar({ acao: 'UPDATE', tabela: 'marcacoes', registro_id: id, dados_anteriores: { data_hora: marcacao.data_hora }, dados_novos: { data_hora: normalized, motivo: motivo || null }, usuario_id: request.user.id, ip: request.ip });
+    auditar({ acao: 'UPDATE', tabela: 'marcacoes', registro_id: id, dados_anteriores: { data_hora: marcacao.data_hora }, dados_novos: { data_hora: normalized, motivo: justificativa || motivo || null }, usuario_id: request.user.id, ip: request.ip });
     return successResponse({ id }, 'Batida atualizada');
   });
 

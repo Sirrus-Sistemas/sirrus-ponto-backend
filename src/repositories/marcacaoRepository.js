@@ -36,28 +36,37 @@ export const MarcacaoRepository = {
     return rows[0] || null;
   },
 
-  async insertManual({ funcionarioId, dataHora, motivo, editadoPor }) {
+  async insertManual({ funcionarioId, dataHora, motivo, editadoPor, slotOverride }) {
     const result = await query(
       `INSERT INTO marcacoes
-         (funcionario_id, data_hora, tipo, motivo_edicao, original, editado_por)
-       VALUES (?, ?, 'manual', ?, 0, ?)`,
-      [funcionarioId, dataHora, motivo || 'ESQUECIMENTO', editadoPor ?? null],
+         (funcionario_id, data_hora, tipo, motivo_edicao, original, editado_por, slot_override)
+       VALUES (?, ?, 'manual', ?, 0, ?, ?)`,
+      [funcionarioId, dataHora, motivo || 'ESQUECIMENTO', editadoPor ?? null, slotOverride ?? null],
     );
     const rows = await query(
-      `SELECT id, data_hora, tipo, motivo_edicao FROM marcacoes WHERE id = ? LIMIT 1`,
+      `SELECT id, data_hora, tipo, motivo_edicao, slot_override FROM marcacoes WHERE id = ? LIMIT 1`,
       [result.insertId],
     );
     return rows[0] || null;
   },
 
   async update(id, { dataHora, motivo, editadoPor, slotOverride }) {
-    await query(
-      `UPDATE marcacoes
-          SET data_hora = ?, motivo_edicao = ?, editado_por = ?, original = 0,
-              slot_override = ?
-        WHERE id = ?`,
-      [dataHora, motivo ?? null, editadoPor ?? null, slotOverride ?? null, id],
-    );
+    if (slotOverride !== undefined) {
+      await query(
+        `UPDATE marcacoes
+            SET data_hora = ?, motivo_edicao = ?, editado_por = ?, original = 0,
+                slot_override = ?
+          WHERE id = ?`,
+        [dataHora, motivo ?? null, editadoPor ?? null, slotOverride ?? null, id],
+      );
+    } else {
+      await query(
+        `UPDATE marcacoes
+            SET data_hora = ?, motivo_edicao = ?, editado_por = ?, original = 0
+          WHERE id = ?`,
+        [dataHora, motivo ?? null, editadoPor ?? null, id],
+      );
+    }
   },
 
   async deleteById(id) {

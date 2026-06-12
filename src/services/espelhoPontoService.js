@@ -571,6 +571,20 @@ export const EspelhoPontoService = {
       const minutos_noturno = raw.length >= 2 ? minutosNocturnosPar(raw, noturnoInicioMin, tzOffsetMs) : 0;
       totalMinutosNoturno += minutos_noturno;
 
+      // Build expected punch times for justificativa automática
+      let horarios_previstos = [];
+      if (usaEscala && escalaEntry && escalaEntry.tipo === 'trabalho') {
+        const campos = ['entrada1','saida1','entrada2','saida2','entrada3','saida3','entrada4','saida4'];
+        horarios_previstos = campos.map((c) => escalaEntry[c]).filter(Boolean);
+      } else if (hasTurnoHorarios) {
+        const th = turnoHorariosMap.get(dow);
+        if (th && th.trabalha) {
+          horarios_previstos = [th.entrada, th.saida_intervalo, th.retorno_intervalo, th.saida].filter(Boolean);
+        }
+      } else if (funcionario) {
+        horarios_previstos = [funcionario.turno_entrada, funcionario.turno_saida_intervalo, funcionario.turno_retorno_intervalo, funcionario.turno_saida].filter(Boolean);
+      }
+
       return {
         data,
         dia_semana: dow,
@@ -579,6 +593,7 @@ export const EspelhoPontoService = {
         modifiers,
         dia_trabalho: ehDiaTrabalho,
         feriado,
+        horarios_previstos,
         ocorrencia: ocorrencia
           ? {
               id: ocorrencia.id,
