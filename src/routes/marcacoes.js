@@ -2,6 +2,7 @@ import { authenticate, empresaScope } from '../middlewares/auth.js';
 import { MarcacaoRepository } from '../repositories/marcacaoRepository.js';
 import { FuncionarioRepository } from '../repositories/funcionarioRepository.js';
 import { EspelhoPontoService, fusoHorarioToTzOffset } from '../services/espelhoPontoService.js';
+import { EmpresaRepository } from '../repositories/empresaRepository.js';
 import { successResponse } from '../utils/helpers.js';
 import { toIsoDataHoraUtc } from '../utils/dataHoraIso.js';
 import { query } from '../config/database.js';
@@ -100,12 +101,15 @@ export default async function marcacaoRoutes(fastify) {
       funcionarioId = parseInt(request.query.funcionario_id, 10);
     }
 
-    const func = await FuncionarioRepository.findById(funcionarioId);
+    const [func, empresa] = await Promise.all([
+      FuncionarioRepository.findById(funcionarioId),
+      EmpresaRepository.findById(request.empresaId),
+    ]);
     if (!func || func.empresa_id !== request.empresaId) {
       return reply.code(404).send({ error: 'Não encontrado', message: 'Funcionário não encontrado' });
     }
 
-    const tzOffset = fusoHorarioToTzOffset(func.fuso_horario);
+    const tzOffset = fusoHorarioToTzOffset(func.fuso_horario ?? empresa?.municipio_fuso_horario);
     const rows = await MarcacaoRepository.findByFuncionarioMonth(funcionarioId, ano, mes, tzOffset);
 
     // Group by day

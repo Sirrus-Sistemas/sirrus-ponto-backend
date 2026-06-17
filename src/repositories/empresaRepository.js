@@ -3,13 +3,25 @@ import { query } from '../config/database.js';
 export const EmpresaRepository = {
   async findById(id) {
     const rows = await query(
-      `SELECT id, razao_social, nome_fantasia, cnpj, endereco, cidade, uf
-         FROM empresas
-        WHERE id = ?
+      `SELECT e.id, e.razao_social, e.nome_fantasia, e.cnpj, e.endereco, e.cidade, e.uf,
+              e.municipio_id,
+              m.NOMEMUNICIPIO AS municipio_nome,
+              m.ESTADO        AS municipio_estado,
+              m.fuso_horario  AS municipio_fuso_horario
+         FROM empresas e
+         LEFT JOIN municipios m ON e.municipio_id = m.CODMUNICIPIO
+        WHERE e.id = ?
         LIMIT 1`,
       [id],
     );
     return rows[0] || null;
+  },
+
+  async updateMunicipio(empresaId, municipioId) {
+    await query(
+      'UPDATE empresas SET municipio_id = ? WHERE id = ?',
+      [municipioId ?? null, empresaId],
+    );
   },
 
   async findFilialById(id) {

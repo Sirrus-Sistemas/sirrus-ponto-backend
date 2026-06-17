@@ -1,6 +1,7 @@
 import { authenticate, authorize, empresaScope } from '../middlewares/auth.js';
 import { query } from '../config/database.js';
 import { successResponse } from '../utils/helpers.js';
+import { EmpresaRepository } from '../repositories/empresaRepository.js';
 
 function calcCargaMinutos(entrada, saida_intervalo, retorno_intervalo, saida) {
   if (!entrada || !saida) return 0;
@@ -23,6 +24,32 @@ function normalizarBatidasEsperadas(val) {
 export default async function cadastrosRoutes(fastify) {
   fastify.addHook('preHandler', authenticate);
   fastify.addHook('preHandler', empresaScope);
+
+  // ═══════════════════════════════════════════════════════════════════
+  // EMPRESA
+  // ═══════════════════════════════════════════════════════════════════
+
+  fastify.get('/empresa', {
+    preHandler: [authorize('admin')],
+  }, async (request) => {
+    const empresa = await EmpresaRepository.findById(request.empresaId);
+    return successResponse(empresa);
+  });
+
+  fastify.put('/empresa/municipio', {
+    preHandler: [authorize('admin')],
+    schema: {
+      body: {
+        type: 'object',
+        properties: {
+          municipio_id: { type: ['integer', 'null'] },
+        },
+      },
+    },
+  }, async (request) => {
+    await EmpresaRepository.updateMunicipio(request.empresaId, request.body.municipio_id ?? null);
+    return successResponse({}, 'Município da empresa atualizado');
+  });
 
   // ═══════════════════════════════════════════════════════════════════
   // FILIAIS

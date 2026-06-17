@@ -284,17 +284,22 @@ export const EspelhoPontoService = {
     const dataInicio = `${year}-${pad2(month)}-01`;
     const dataFim = `${year}-${pad2(month)}-${pad2(new Date(year, month, 0).getDate())}`;
 
-    // Load funcionário first to derive fuso horário correto por estado (Acre, MT, SC…)
-    const funcionario = await FuncionarioRepository.findById(funcionarioId);
-    const tzOffset = fusoHorarioToTzOffset(funcionario?.fuso_horario);
+    // Carrega funcionário e empresa em paralelo para resolver o fuso:
+    // 1º município do funcionário, 2º município da empresa, 3º APP_TZ_OFFSET
+    const [funcionario, empresa] = await Promise.all([
+      FuncionarioRepository.findById(funcionarioId),
+      EmpresaRepository.findById(empresaId),
+    ]);
+    const tzOffset = fusoHorarioToTzOffset(
+      funcionario?.fuso_horario ?? empresa?.municipio_fuso_horario
+    );
     const tzOffsetMs = parseTzOffsetMs(tzOffset);
 
-    const [rows, feriadosRows, turnoRow, ocorrencias, empresa] = await Promise.all([
+    const [rows, feriadosRows, turnoRow, ocorrencias] = await Promise.all([
       MarcacaoRepository.findByFuncionarioMonth(funcionarioId, year, month, tzOffset),
       FeriadoRepository.listByEmpresaMonth(empresaId, year, month),
       FuncionarioRepository.findTurnoJornada(funcionarioId),
       OcorrenciaRepository.findByFuncionarioMonth(funcionarioId, year, month),
-      EmpresaRepository.findById(empresaId),
     ]);
 
     // Load per-day turno hours and lotação rules in parallel

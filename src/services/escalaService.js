@@ -61,7 +61,7 @@ export function gerarDias({
  * Substitui qualquer registro existente para o mesmo funcionário/data.
  * Ativa automaticamente usa_escala = 1 para o funcionário.
  */
-export async function salvarEscala(funcionarioId, geradoPor, dias) {
+export async function salvarEscala(funcionarioId, geradoPor, dias, tipoCiclo, inicioCiclo) {
   if (!dias.length) return 0;
 
   await transaction(async (conn) => {
@@ -84,8 +84,8 @@ export async function salvarEscala(funcionarioId, geradoPor, dias) {
         (funcionario_id, data, tipo,
          entrada1, saida1, entrada2, saida2,
          entrada3, saida3, entrada4, saida4,
-         fim_noturno, gerado_por)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         fim_noturno, gerado_por, tipo_ciclo, inicio_ciclo)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     for (const d of dias) {
@@ -93,7 +93,7 @@ export async function salvarEscala(funcionarioId, geradoPor, dias) {
         funcionarioId, d.data, d.tipo,
         d.entrada1, d.saida1, d.entrada2, d.saida2,
         d.entrada3, d.saida3, d.entrada4, d.saida4,
-        d.fim_noturno, geradoPor,
+        d.fim_noturno, geradoPor, tipoCiclo || null, inicioCiclo || null,
       ]);
     }
   });
@@ -109,7 +109,8 @@ export async function buscarPorPeriodo(funcionarioId, dataInicio, dataFim) {
     `SELECT DATE_FORMAT(data, '%Y-%m-%d') AS data, tipo,
             entrada1, saida1, entrada2, saida2,
             entrada3, saida3, entrada4, saida4,
-            fim_noturno
+            fim_noturno, tipo_ciclo,
+            DATE_FORMAT(inicio_ciclo, '%Y-%m-%d') AS inicio_ciclo
      FROM escalas
      WHERE funcionario_id = ? AND data BETWEEN ? AND ?
      ORDER BY data`,

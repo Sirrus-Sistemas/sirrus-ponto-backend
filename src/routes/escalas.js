@@ -115,7 +115,7 @@ export default async function escalasRoutes(fastify) {
       fimNoturno: fim_noturno,
     });
 
-    const total = await salvarEscala(funcionario_id, request.user.id, dias);
+    const total = await salvarEscala(funcionario_id, request.user.id, dias, tipo_ciclo, inicio_ciclo);
 
     return reply.code(201).send({ success: true, total, message: `${total} dias gravados` });
   });
