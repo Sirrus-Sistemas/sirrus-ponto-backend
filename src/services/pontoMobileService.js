@@ -204,7 +204,7 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
 
   let mobileId = func.pontomobile_id;
   if (mobileId) {
-    await _request('PUT', `/admin/users_funcionarios/${mobileId}`, body);
+    await _request('PUT', `/admin/users_funcionarios/new/${mobileId}`, body);
   } else {
     try {
       const res = await _request('POST', '/admin/users_funcionarios', body);
@@ -219,7 +219,7 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
       if (!mobileId) throw new Error(`Funcionário já existe no mobile mas não foi possível descobrir o ID. CPF: ${cpfClean}`);
 
       // Atualiza dados no mobile agora que temos o ID
-      await _request('PUT', `/admin/users_funcionarios/${mobileId}`, body);
+      await _request('PUT', `/admin/users_funcionarios/new/${mobileId}`, body);
     }
     await query('UPDATE funcionarios SET pontomobile_id = ? WHERE id = ?', [mobileId, funcionarioId]);
   }
