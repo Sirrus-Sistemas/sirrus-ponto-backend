@@ -1,5 +1,5 @@
 import { authenticate, authorize, empresaScope } from '../middlewares/auth.js';
-import { query } from '../config/database.js';
+import { query, transaction } from '../config/database.js';
 import { successResponse } from '../utils/helpers.js';
 import { EmpresaRepository } from '../repositories/empresaRepository.js';
 
@@ -204,6 +204,7 @@ export default async function cadastrosRoutes(fastify) {
           intervalo_minimo_min: { type: 'integer', minimum: 0 },
           tipo: { type: 'string', enum: ['fixo', 'flexivel', 'escala'] },
           batidas_esperadas_dia: { type: 'integer', minimum: 2, maximum: 24 },
+          batida_times_json: { type: ['string', 'null'] },
         },
       },
     },
@@ -213,13 +214,15 @@ export default async function cadastrosRoutes(fastify) {
     const result = await query(
       `INSERT INTO turnos
        (empresa_id, nome, entrada, saida_intervalo, retorno_intervalo, saida,
-        tolerancia_atraso_min, tolerancia_extra_min, intervalo_minimo_min, tipo, batidas_esperadas_dia)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tolerancia_atraso_min, tolerancia_extra_min, intervalo_minimo_min, tipo, batidas_esperadas_dia,
+        batida_times_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         request.empresaId, d.nome, d.entrada, d.saida_intervalo,
         d.retorno_intervalo, d.saida,
         d.tolerancia_atraso_min || 10, d.tolerancia_extra_min || 10,
         d.intervalo_minimo_min || 60, d.tipo || 'fixo', batidas,
+        d.batida_times_json || null,
       ]
     );
     return reply.code(201).send(successResponse({ id: result.insertId, ...d }, 'Turno criado'));
@@ -235,7 +238,7 @@ export default async function cadastrosRoutes(fastify) {
     const allowed = [
       'nome', 'entrada', 'saida_intervalo', 'retorno_intervalo', 'saida',
       'tolerancia_atraso_min', 'tolerancia_extra_min', 'intervalo_minimo_min',
-      'tipo', 'ativo', 'batidas_esperadas_dia',
+      'tipo', 'ativo', 'batidas_esperadas_dia', 'batida_times_json',
     ];
 
     for (const key of allowed) {
@@ -283,10 +286,10 @@ export default async function cadastrosRoutes(fastify) {
           properties: {
             dia_semana:        { type: 'integer', minimum: 0, maximum: 6 },
             trabalha:          { type: 'integer', minimum: 0, maximum: 1 },
-            entrada:           { type: 'string' },
-            saida_intervalo:   { type: 'string' },
-            retorno_intervalo: { type: 'string' },
-            saida:             { type: 'string' },
+            entrada:           { type: ['string', 'null'] },
+            saida_intervalo:   { type: ['string', 'null'] },
+            retorno_intervalo: { type: ['string', 'null'] },
+            saida:             { type: ['string', 'null'] },
             carga_minutos:     { type: 'integer', minimum: 0 },
           },
         },
@@ -299,24 +302,24 @@ export default async function cadastrosRoutes(fastify) {
 
     const dias = request.body;
 
-    // Delete existing and re-insert
-    await query('DELETE FROM turno_horarios WHERE turno_id = ?', [turnoId]);
-
-    for (const d of dias) {
-      const carga = d.trabalha ? calcCargaMinutos(d.entrada, d.saida_intervalo, d.retorno_intervalo, d.saida) : 0;
-      await query(
-        `INSERT INTO turno_horarios (turno_id, dia_semana, trabalha, entrada, saida_intervalo, retorno_intervalo, saida, carga_minutos)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          turnoId, d.dia_semana, d.trabalha ? 1 : 0,
-          d.trabalha ? (d.entrada || null) : null,
-          d.trabalha ? (d.saida_intervalo || null) : null,
-          d.trabalha ? (d.retorno_intervalo || null) : null,
-          d.trabalha ? (d.saida || null) : null,
-          carga,
-        ],
-      );
-    }
+    await transaction(async (conn) => {
+      await conn.execute('DELETE FROM turno_horarios WHERE turno_id = ?', [turnoId]);
+      for (const d of dias) {
+        const carga = d.trabalha ? calcCargaMinutos(d.entrada, d.saida_intervalo, d.retorno_intervalo, d.saida) : 0;
+        await conn.execute(
+          `INSERT INTO turno_horarios (turno_id, dia_semana, trabalha, entrada, saida_intervalo, retorno_intervalo, saida, carga_minutos)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            turnoId, d.dia_semana, d.trabalha ? 1 : 0,
+            d.trabalha ? (d.entrada || null) : null,
+            d.trabalha ? (d.saida_intervalo || null) : null,
+            d.trabalha ? (d.retorno_intervalo || null) : null,
+            d.trabalha ? (d.saida || null) : null,
+            carga,
+          ],
+        );
+      }
+    });
 
     return successResponse(null, 'Horários por dia salvos');
   });
