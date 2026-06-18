@@ -381,7 +381,7 @@ export const EspelhoPontoService = {
       const marcacoesRaw = raw.map((r) => ({
         id: r.id,
         data_hora: toIsoDataHoraUtc(r.data_hora),
-        data_hora_local: r.data_hora_local || null,
+        data_hora_local: toIsoDataHoraUtc(r.data_hora),
         tipo: r.tipo,
         tipo_label: TIPO_LABEL[r.tipo] || r.tipo,
         motivo_edicao: r.motivo_edicao || null,

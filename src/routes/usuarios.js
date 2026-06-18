@@ -14,9 +14,12 @@ export default async function usuariosRoutes(fastify) {
     const rows = await query(
       `SELECT f.id, f.nome, f.email, f.role, f.ativo AS funcionario_ativo,
               u.cpf, u.ativo AS usuario_ativo,
-              CASE WHEN u.funcionario_id IS NOT NULL THEN 1 ELSE 0 END AS tem_acesso
+              CASE WHEN u.funcionario_id IS NOT NULL THEN 1 ELSE 0 END AS tem_acesso,
+              f.lotacao_id,
+              l.nome AS lotacao_nome
        FROM funcionarios f
        LEFT JOIN usuarios u ON u.funcionario_id = f.id
+       LEFT JOIN lotacoes l ON l.id = f.lotacao_id
        WHERE f.empresa_id = ?
        ORDER BY f.nome`,
       [request.empresaId]

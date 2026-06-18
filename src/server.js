@@ -18,9 +18,6 @@ import usuariosRoutes from './routes/usuarios.js';
 const app = Fastify({
   logger: {
     level: process.env.NODE_ENV === 'development' ? 'info' : 'warn',
-    transport: process.env.NODE_ENV === 'development'
-      ? { target: 'pino-pretty', options: { colorize: true } }
-      : undefined,
   },
 });
 

@@ -218,6 +218,11 @@ export default async function marcacaoRoutes(fastify) {
       return reply.code(403).send({ error: 'Acesso negado', message: 'Marcação não pertence à sua empresa' });
     }
 
+    return reply.code(409).send({
+      error: 'Operação não permitida',
+      message: 'Não é possível justificar uma batida existente. Abona a batida (exclua-a) e depois lance a justificativa manualmente.',
+    });
+
     const { data_hora, motivo, justificativa, slot_override } = request.body;
     const normalized = data_hora.replace('T', ' ').replace('Z', '').slice(0, 19);
 
