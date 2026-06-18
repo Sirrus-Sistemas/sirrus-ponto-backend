@@ -453,12 +453,14 @@ export default async function cadastrosRoutes(fastify) {
     const offset = (pageNum - 1) * limitNum;
 
     let sql = `
-      SELECT id, empresa_id,
-             IF(recorrente = 1, DATE_FORMAT(data, '%m-%d'), DATE_FORMAT(data, '%Y-%m-%d')) AS data,
-             descricao AS nome, tipo, uf, municipio_ibge,
-             recorrente, created_at
-        FROM feriados
-       WHERE empresa_id = ?`;
+      SELECT f.id, f.empresa_id,
+             IF(f.recorrente = 1, DATE_FORMAT(f.data, '%m-%d'), DATE_FORMAT(f.data, '%Y-%m-%d')) AS data,
+             f.descricao AS nome, f.tipo, f.uf, f.municipio_ibge,
+             m.NOMEMUNICIPIO AS municipio_nome,
+             f.recorrente, f.created_at
+        FROM feriados f
+        LEFT JOIN municipios m ON m.CODMUNICIPIO = f.municipio_ibge
+       WHERE f.empresa_id = ?`;
     const params = [request.empresaId];
 
     if (year) { sql += ' AND (recorrente = 1 OR YEAR(data) = ?)'; params.push(year); }
