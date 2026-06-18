@@ -173,7 +173,7 @@ export async function syncLotacao(lotacaoId, mobileEmpresaId) {
 export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEmpresaId, mobileLotacaoId: cachedLotacaoId } = {}) {
   const [func] = await query(
     `SELECT f.id, f.nome, f.cpf, f.email, f.ativo, f.lotacao_id,
-            f.pontomobile_id, f.filial_id
+            f.pontomobile_id, f.filial_id, f.senha_mobile
        FROM funcionarios f WHERE f.id = ? LIMIT 1`,
     [funcionarioId],
   );
@@ -191,12 +191,13 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
 
   // 3. Monta payload
   const cpfClean = String(func.cpf || '').replace(/\D/g, '');
+  const senhaMobile = func.senha_mobile || cpfClean;
   const body = {
     nome: func.nome,
     cpf: cpfClean,
     empresa_id: mobileEmpresaId,
     email: func.email || `${cpfClean}@pontomobile.local`,
-    senha: cpfClean,
+    senha: senhaMobile,
     ativo: func.ativo === 1,
     admin: 'N',
     ...(mobileLotacaoId != null ? { lotacao_id: mobileLotacaoId } : {}),
@@ -214,7 +215,7 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
       const isDuplicate = err.message.includes('422') || err.message.toLowerCase().includes('duplicate');
       if (!isDuplicate) throw err;
 
-      const senhas = [cpfClean.substring(0, 6), cpfClean];
+      const senhas = [...new Set([senhaMobile, cpfClean.substring(0, 6), cpfClean])];
       mobileId = await _resolverMobileIdPorCpf(cpfClean, senhas);
       if (!mobileId) throw new Error(`Funcionário já existe no mobile mas não foi possível descobrir o ID. CPF: ${cpfClean}`);
 

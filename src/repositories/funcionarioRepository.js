@@ -179,16 +179,17 @@ export const FuncionarioRepository = {
       `INSERT INTO funcionarios
        (empresa_id, filial_id, departamento_id, turno_id, lotacao_id, gestor_id,
         nome, cpf, email, telefone, cargo, matricula,
-        data_admissao, pis, senha_hash, role,
+        data_admissao, pis, senha_hash, senha_mobile, role,
         cep, logradouro, numero, complemento, bairro, cidade, estado, municipio_id,
         usa_mobile)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.empresa_id, data.filial_id || null, data.departamento_id || null,
         data.turno_id || null, data.lotacao_id || null, data.gestor_id || null,
         data.nome, data.cpf || null, data.email, data.telefone || null,
         data.cargo || null, data.matricula || null,
-        data.data_admissao, data.pis || null, data.senha_hash, data.role || 'funcionario',
+        data.data_admissao, data.pis || null, data.senha_hash, data.senha_mobile || null,
+        data.role || 'funcionario',
         data.cep || null, data.logradouro || null, data.numero || null,
         data.complemento || null, data.bairro || null, data.cidade || null, data.estado || null,
         data.municipio_id || null,
@@ -211,7 +212,7 @@ export const FuncionarioRepository = {
       'data_admissao', 'data_demissao', 'pis', 'role', 'ativo', 'usa_escala',
       'central_ativa', 'permitir_geo', 'permitir_foto', 'permitir_ajuste_ponto',
       'cep', 'logradouro', 'numero', 'complemento', 'bairro', 'cidade', 'estado', 'municipio_id',
-      'usa_mobile',
+      'usa_mobile', 'senha_hash', 'senha_mobile',
     ];
 
     for (const key of allowed) {

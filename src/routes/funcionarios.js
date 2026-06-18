@@ -73,6 +73,7 @@ const updateSchema = {
       cidade: { type: ['string', 'null'] },
       estado: { type: ['string', 'null'], maxLength: 2 },
       municipio_id: { type: ['integer', 'null'] },
+      password: { type: 'string', minLength: 6 },
     },
   },
 };
@@ -127,6 +128,7 @@ export default async function funcionarioRoutes(fastify) {
 
     data.empresa_id = request.empresaId;
     data.senha_hash = await AuthService.hashPassword(password);
+    data.senha_mobile = password;
 
     const cpfDigits = onlyCpfDigits(data.cpf);
     if (cpfDigits.length !== 11) {
@@ -154,15 +156,22 @@ export default async function funcionarioRoutes(fastify) {
       return reply.code(404).send({ error: 'Funcionário não encontrado' });
     }
 
-    const turnoIdAnterior = func.turno_id ?? null;
-    await FuncionarioRepository.update(request.params.id, request.body);
+    const { password, ...updateData } = request.body;
 
-    if (request.body.turno_id !== undefined && request.body.turno_id !== turnoIdAnterior) {
-      auditar({ acao: 'UPDATE', tabela: 'funcionarios', registro_id: Number(request.params.id), dados_anteriores: { turno_id: turnoIdAnterior }, dados_novos: { turno_id: request.body.turno_id }, usuario_id: request.user.id, ip: request.ip });
+    if (password) {
+      updateData.senha_hash = await AuthService.hashPassword(password);
+      updateData.senha_mobile = password;
     }
 
-    if (request.body.cpf !== undefined) {
-      const d = onlyCpfDigits(request.body.cpf);
+    const turnoIdAnterior = func.turno_id ?? null;
+    await FuncionarioRepository.update(request.params.id, updateData);
+
+    if (updateData.turno_id !== undefined && updateData.turno_id !== turnoIdAnterior) {
+      auditar({ acao: 'UPDATE', tabela: 'funcionarios', registro_id: Number(request.params.id), dados_anteriores: { turno_id: turnoIdAnterior }, dados_novos: { turno_id: updateData.turno_id }, usuario_id: request.user.id, ip: request.ip });
+    }
+
+    if (updateData.cpf !== undefined) {
+      const d = onlyCpfDigits(updateData.cpf);
       if (d.length === 11) {
         await UsuarioRepository.updateCpf(request.params.id, d);
       }
