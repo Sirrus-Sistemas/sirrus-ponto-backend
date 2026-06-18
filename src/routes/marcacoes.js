@@ -188,12 +188,12 @@ export default async function marcacaoRoutes(fastify) {
   const editarSchema = {
     body: {
       type: 'object',
-      required: ['data_hora'],
       properties: {
-        data_hora: { type: 'string' },
-        motivo: { type: 'string' },
-        justificativa: { type: 'string', maxLength: 500 },
-        slot_override: { type: 'integer', minimum: 0, maximum: 7, nullable: true },
+        data_hora:      { type: 'string' },
+        motivo:         { type: 'string' },
+        justificativa:  { type: 'string', maxLength: 500 },
+        slot_override:  { type: 'integer', minimum: 0, maximum: 7, nullable: true },
+        dia_referencia: { type: ['string', 'null'] },
       },
     },
   };
@@ -218,16 +218,17 @@ export default async function marcacaoRoutes(fastify) {
       return reply.code(403).send({ error: 'Acesso negado', message: 'Marcação não pertence à sua empresa' });
     }
 
-    const { data_hora, motivo, justificativa, slot_override } = request.body;
-    const normalized = data_hora.replace('T', ' ').replace('Z', '').slice(0, 19);
+    const { data_hora, motivo, justificativa, slot_override, dia_referencia } = request.body;
+    const normalized = data_hora ? data_hora.replace('T', ' ').replace('Z', '').slice(0, 19) : undefined;
 
     await MarcacaoRepository.update(id, {
       dataHora: normalized,
       motivo: justificativa || motivo || null,
       editadoPor: request.user.id,
       slotOverride: slot_override !== undefined ? slot_override : undefined,
+      diaReferencia: dia_referencia !== undefined ? dia_referencia : undefined,
     });
-    auditar({ acao: 'UPDATE', tabela: 'marcacoes', registro_id: id, dados_anteriores: { data_hora: marcacao.data_hora }, dados_novos: { data_hora: normalized, motivo: justificativa || motivo || null }, usuario_id: request.user.id, ip: request.ip });
+    auditar({ acao: 'UPDATE', tabela: 'marcacoes', registro_id: id, dados_anteriores: { data_hora: marcacao.data_hora }, dados_novos: { data_hora: normalized, motivo: justificativa || motivo || null, dia_referencia }, usuario_id: request.user.id, ip: request.ip });
     return successResponse({ id }, 'Batida atualizada');
   });
 

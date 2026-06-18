@@ -50,23 +50,25 @@ export const MarcacaoRepository = {
     return rows[0] || null;
   },
 
-  async update(id, { dataHora, motivo, editadoPor, slotOverride }) {
-    if (slotOverride !== undefined) {
-      await query(
-        `UPDATE marcacoes
-            SET data_hora = ?, motivo_edicao = ?, editado_por = ?, original = 0,
-                slot_override = ?
-          WHERE id = ?`,
-        [dataHora, motivo ?? null, editadoPor ?? null, slotOverride ?? null, id],
-      );
-    } else {
-      await query(
-        `UPDATE marcacoes
-            SET data_hora = ?, motivo_edicao = ?, editado_por = ?, original = 0
-          WHERE id = ?`,
-        [dataHora, motivo ?? null, editadoPor ?? null, id],
-      );
+  async update(id, { dataHora, motivo, editadoPor, slotOverride, diaReferencia }) {
+    const sets = ['motivo_edicao = ?', 'editado_por = ?', 'original = 0'];
+    const params = [motivo ?? null, editadoPor ?? null];
+
+    if (dataHora !== undefined) {
+      sets.unshift('data_hora = ?');
+      params.unshift(dataHora);
     }
+    if (slotOverride !== undefined) {
+      sets.push('slot_override = ?');
+      params.push(slotOverride ?? null);
+    }
+    if (diaReferencia !== undefined) {
+      sets.push('dia_referencia = ?');
+      params.push(diaReferencia ?? null);
+    }
+
+    params.push(id);
+    await query(`UPDATE marcacoes SET ${sets.join(', ')} WHERE id = ?`, params);
   },
 
   async deleteById(id) {
@@ -75,21 +77,29 @@ export const MarcacaoRepository = {
 
   async findByFuncionarioMonth(funcionarioId, year, month, tzOffset = TZ_OFFSET_DEFAULT) {
     // DATE_SUB 5h shifts the window so 00:00–04:59 local belongs to the previous shift day.
+    // dia_referencia overrides this automatic grouping for overnight punches beyond 05:00.
     return query(
       `SELECT id,
               data_hora,
+              dia_referencia,
               DATE_FORMAT(CONVERT_TZ(data_hora, '+00:00', ?), '%Y-%m-%dT%H:%i:%s') AS data_hora_local,
               tipo,
               motivo_edicao,
               original,
               slot_override,
-              DATE_FORMAT(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?), '%Y-%m-%d') AS dia
+              COALESCE(
+                DATE_FORMAT(dia_referencia, '%Y-%m-%d'),
+                DATE_FORMAT(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?), '%Y-%m-%d')
+              ) AS dia
          FROM marcacoes
         WHERE funcionario_id = ?
-          AND YEAR(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?))  = ?
-          AND MONTH(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)) = ?
+          AND (
+            (YEAR(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?))  = ?
+             AND MONTH(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)) = ?)
+            OR (dia_referencia IS NOT NULL AND YEAR(dia_referencia) = ? AND MONTH(dia_referencia) = ?)
+          )
         ORDER BY data_hora ASC`,
-      [tzOffset, tzOffset, funcionarioId, tzOffset, year, tzOffset, month],
+      [tzOffset, tzOffset, funcionarioId, tzOffset, year, tzOffset, month, year, month],
     );
   },
 };
