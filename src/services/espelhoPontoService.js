@@ -502,7 +502,7 @@ export const EspelhoPontoService = {
       }
 
       const batidasEsperadasHoje = hasTurnoHorarios
-        ? batidasEsperadasDoDia(turnoHorariosMap.get(dow))
+        ? (batidasEsperadasDia ?? batidasEsperadasDoDia(turnoHorariosMap.get(dow)))
         : batidasEsperadasDia;
 
       // incompleto: derive from modifiers (set in cascade above) + cicloBatidas check
@@ -611,6 +611,7 @@ export const EspelhoPontoService = {
             }
           : null,
         marcacoes,
+        batidas_esperadas: batidasEsperadasHoje ?? null,
         minutos_trabalhados: minutos,
         minutos_previstos,
         saldo_minutos,
