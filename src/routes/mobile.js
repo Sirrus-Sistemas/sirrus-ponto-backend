@@ -96,14 +96,15 @@ export default async function mobileRoutes(fastify) {
             data_inicio: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
             data_fim: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
             lotacao_id: { type: 'integer', minimum: 1 },
+            funcionario_id: { type: 'integer', minimum: 1 },
           },
         },
       },
     },
     async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
-      const { filial_id, data_inicio, data_fim, lotacao_id } = request.body;
-      const result = await pullMarcacoes(filial_id, data_inicio, data_fim, lotacao_id ?? null);
+      const { filial_id, data_inicio, data_fim, lotacao_id, funcionario_id } = request.body;
+      const result = await pullMarcacoes(filial_id, data_inicio, data_fim, lotacao_id ?? null, funcionario_id ?? null);
       const msg = `Importação concluída: ${result.importados} novas, ${result.ignorados} ignoradas.`;
       return successResponse(result, msg);
     },

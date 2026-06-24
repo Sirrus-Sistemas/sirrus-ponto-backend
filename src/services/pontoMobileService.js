@@ -281,7 +281,7 @@ export async function syncAllFuncionarios(empresaId, filialId = null) {
 
 // ── Importar Marcações ───────────────────────────────────────────────────────
 
-export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = null) {
+export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = null, funcionarioId = null) {
   const [fil] = await query(
     'SELECT id, empresa_id, pontomobile_id FROM filiais WHERE id = ? LIMIT 1',
     [filialId],
@@ -302,30 +302,50 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
 
   const items = Array.isArray(data) ? data : (data?.data ?? []);
 
-  // Auto-sincroniza funcionários da filial (e lotação, se filtrada) que ainda não têm pontomobile_id
-  const naoSincronizados = await query(
-    `SELECT id FROM funcionarios WHERE filial_id = ? AND ativo = 1 AND pontomobile_id IS NULL${lotacaoId ? ' AND lotacao_id = ?' : ''}`,
-    lotacaoId ? [filialId, lotacaoId] : [filialId],
-  );
-  if (naoSincronizados.length > 0) {
-    const CONCURRENCY = 10;
-    for (let i = 0; i < naoSincronizados.length; i += CONCURRENCY) {
-      const lote = naoSincronizados.slice(i, i + CONCURRENCY);
-      await Promise.allSettled(lote.map((f) => syncFuncionario(f.id)));
+  // Auto-sincroniza funcionários sem pontomobile_id
+  if (funcionarioId) {
+    const [naoSync] = await query(
+      'SELECT id FROM funcionarios WHERE id = ? AND filial_id = ? AND ativo = 1 AND pontomobile_id IS NULL LIMIT 1',
+      [funcionarioId, filialId],
+    );
+    if (naoSync) await syncFuncionario(funcionarioId).catch(() => {});
+  } else {
+    const naoSincronizados = await query(
+      `SELECT id FROM funcionarios WHERE filial_id = ? AND ativo = 1 AND pontomobile_id IS NULL${lotacaoId ? ' AND lotacao_id = ?' : ''}`,
+      lotacaoId ? [filialId, lotacaoId] : [filialId],
+    );
+    if (naoSincronizados.length > 0) {
+      const CONCURRENCY = 10;
+      for (let i = 0; i < naoSincronizados.length; i += CONCURRENCY) {
+        const lote = naoSincronizados.slice(i, i + CONCURRENCY);
+        await Promise.allSettled(lote.map((f) => syncFuncionario(f.id)));
+      }
     }
   }
 
-  // Mapa mobileFuncionarioId → { id, fusoHorario } (filtra apenas funcionários da filial)
+  // Mapa mobileFuncionarioId → { id, fusoHorario } (filtra por filial, lotação e/ou funcionário específico)
   const mobileIds = [...new Set(items.map((i) => Number(i.funcionario_id)).filter(Boolean))];
   const funcMap = new Map();
   if (mobileIds.length) {
     const placeholders = mobileIds.map(() => '?').join(',');
+    const conditions = [
+      'f.filial_id = ?',
+      lotacaoId ? 'f.lotacao_id = ?' : null,
+      funcionarioId ? 'f.id = ?' : null,
+      `f.pontomobile_id IN (${placeholders})`,
+    ].filter(Boolean).join(' AND ');
+    const params = [
+      filialId,
+      ...(lotacaoId ? [lotacaoId] : []),
+      ...(funcionarioId ? [funcionarioId] : []),
+      ...mobileIds,
+    ];
     const funcs = await query(
       `SELECT f.id, f.pontomobile_id, m.fuso_horario
          FROM funcionarios f
          LEFT JOIN municipios m ON m.CODMUNICIPIO = f.municipio_id
-        WHERE f.filial_id = ?${lotacaoId ? ' AND f.lotacao_id = ?' : ''} AND f.pontomobile_id IN (${placeholders})`,
-      lotacaoId ? [filialId, lotacaoId, ...mobileIds] : [filialId, ...mobileIds],
+        WHERE ${conditions}`,
+      params,
     );
     for (const f of funcs) funcMap.set(Number(f.pontomobile_id), { id: f.id, fusoHorario: f.fuso_horario });
   }
@@ -351,11 +371,18 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
       const dataHoraUtc = marcacaoAtToUtc(item.marcacao_at, fusoEfetivo);
       const tipo = item.origem === 'REP' ? 'rep' : 'online';
 
+      // Deduplicata por mobile_ref_id (UNIQUE INDEX) e também por (funcionario_id, data_hora):
+      // evita re-importar batidas cujo registro original foi deletado e substituído por
+      // correção manual (que fica com mobile_ref_id = NULL e não seria bloqueada pelo índice).
       const result = await query(
         `INSERT IGNORE INTO marcacoes
            (funcionario_id, data_hora, tipo, motivo_edicao, original, mobile_ref_id)
-         VALUES (?, ?, ?, ?, 0, ?)`,
-        [localFuncId, dataHoraUtc, tipo, item.observacao || null, mobileRefId],
+         SELECT ?, ?, ?, ?, 0, ?
+         FROM DUAL
+         WHERE NOT EXISTS (
+           SELECT 1 FROM marcacoes WHERE funcionario_id = ? AND data_hora = ?
+         )`,
+        [localFuncId, dataHoraUtc, tipo, item.observacao || null, mobileRefId, localFuncId, dataHoraUtc],
       );
       if (result.affectedRows > 0) importados++;
       else ignorados++;
