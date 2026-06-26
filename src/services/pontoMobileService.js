@@ -350,8 +350,26 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
     for (const f of funcs) funcMap.set(Number(f.pontomobile_id), { id: f.id, fusoHorario: f.fuso_horario });
   }
 
+  // Busca dias bloqueados para todos os funcionários locais no período.
+  // Usa a mesma janela noturna de 5h do sistema: o dia de referência de uma batida
+  // é DATE(data_hora_utc - 5h), então consultamos com uma margem de 1 dia extra.
+  const localFuncIds = [...funcMap.values()].map((f) => f.id);
+  const bloqueados = new Set(); // "funcionario_id-YYYY-MM-DD"
+  if (localFuncIds.length > 0) {
+    const ph = localFuncIds.map(() => '?').join(',');
+    const diasBloq = await query(
+      `SELECT funcionario_id, DATE_FORMAT(data, '%Y-%m-%d') AS data
+         FROM marcacoes_dia_bloqueado
+        WHERE funcionario_id IN (${ph})
+          AND data BETWEEN DATE_SUB(?, INTERVAL 1 DAY) AND DATE_ADD(?, INTERVAL 1 DAY)`,
+      [...localFuncIds, dataInicio, dataFimInclusiva],
+    );
+    for (const d of diasBloq) bloqueados.add(`${d.funcionario_id}-${d.data}`);
+  }
+
   let importados = 0;
   let ignorados = 0;
+  let bloqueados_count = 0;
   const erros = [];
 
   for (const item of items) {
@@ -370,6 +388,15 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
       const fusoEfetivo = item.fuso != null ? item.fuso : fusoHorarioToNumber(funcEntry.fusoHorario);
       const dataHoraUtc = marcacaoAtToUtc(item.marcacao_at, fusoEfetivo);
       const tipo = item.origem === 'REP' ? 'rep' : 'online';
+
+      // Verifica se o dia de referência desta batida está bloqueado.
+      // Dia de referência = DATE(UTC - 5h), mesma lógica do espelho/ficha.
+      const utcMs = new Date(dataHoraUtc.replace(' ', 'T') + 'Z').getTime();
+      const diaRef = new Date(utcMs - 5 * 3600000).toISOString().slice(0, 10);
+      if (bloqueados.has(`${localFuncId}-${diaRef}`)) {
+        bloqueados_count++;
+        continue;
+      }
 
       // Deduplicata por mobile_ref_id (UNIQUE INDEX) e também por (funcionario_id, data_hora):
       // evita re-importar batidas cujo registro original foi deletado e substituído por
@@ -395,7 +422,7 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
     console.error(`[pullMarcacoes] ${erros.length} erro(s). Primeiro:`, erros[0]);
   }
 
-  return { importados, ignorados, erros };
+  return { importados, ignorados, bloqueados: bloqueados_count, erros };
 }
 
 // ── Status da configuração ───────────────────────────────────────────────────

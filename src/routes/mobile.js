@@ -105,7 +105,7 @@ export default async function mobileRoutes(fastify) {
       if (!requireAdmin(request, reply)) return;
       const { filial_id, data_inicio, data_fim, lotacao_id, funcionario_id } = request.body;
       const result = await pullMarcacoes(filial_id, data_inicio, data_fim, lotacao_id ?? null, funcionario_id ?? null);
-      const msg = `Importação concluída: ${result.importados} novas, ${result.ignorados} ignoradas.`;
+      const msg = `Importação concluída: ${result.importados} novas, ${result.ignorados} ignoradas, ${result.bloqueados} em dias bloqueados.`;
       return successResponse(result, msg);
     },
   );

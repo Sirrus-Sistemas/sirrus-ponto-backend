@@ -110,7 +110,21 @@ export default async function marcacaoRoutes(fastify) {
     }
 
     const tzOffset = fusoHorarioToTzOffset(func.fuso_horario ?? empresa?.municipio_fuso_horario);
-    const rows = await MarcacaoRepository.findByFuncionarioMonth(funcionarioId, ano, mes, tzOffset);
+
+    const dataInicio = `${ano}-${String(mes).padStart(2, '0')}-01`;
+    const dataFim = `${ano}-${String(mes).padStart(2, '0')}-31`;
+
+    const [rows, diasBloq] = await Promise.all([
+      MarcacaoRepository.findByFuncionarioMonth(funcionarioId, ano, mes, tzOffset),
+      query(
+        `SELECT DATE_FORMAT(data, '%Y-%m-%d') AS data
+           FROM marcacoes_dia_bloqueado
+          WHERE funcionario_id = ? AND data BETWEEN ? AND ?`,
+        [funcionarioId, dataInicio, dataFim],
+      ),
+    ]);
+
+    const bloqueadoSet = new Set(diasBloq.map((d) => d.data));
 
     // Group by day
     const diasMap = new Map();
@@ -126,7 +140,11 @@ export default async function marcacaoRoutes(fastify) {
       });
     }
 
-    const dias = Array.from(diasMap.entries()).map(([data, marcacoes]) => ({ data, marcacoes }));
+    const dias = Array.from(diasMap.entries()).map(([data, marcacoes]) => ({
+      data,
+      bloqueado: bloqueadoSet.has(data),
+      marcacoes,
+    }));
     dias.sort((a, b) => a.data.localeCompare(b.data));
 
     return successResponse({
@@ -165,6 +183,22 @@ export default async function marcacaoRoutes(fastify) {
 
     // Accept ISO or "YYYY-MM-DD HH:MM" and normalise to MySQL DATETIME
     const normalized = data_hora.replace('T', ' ').replace('Z', '').slice(0, 19);
+
+    // Rejeita se já existe batida do mesmo funcionário dentro de 60 segundos
+    const [proxima] = await query(
+      `SELECT id, data_hora FROM marcacoes
+        WHERE funcionario_id = ?
+          AND ABS(TIMESTAMPDIFF(SECOND, data_hora, ?)) < 60
+        LIMIT 1`,
+      [funcionario_id, normalized],
+    );
+    if (proxima) {
+      const horaExistente = String(proxima.data_hora).slice(11, 16);
+      return reply.code(409).send({
+        error: 'Duplicata',
+        message: `Já existe uma marcação às ${horaExistente} para este funcionário (menos de 60 segundos de diferença).`,
+      });
+    }
 
     const row = await MarcacaoRepository.insertManual({
       funcionarioId: funcionario_id,
@@ -230,6 +264,101 @@ export default async function marcacaoRoutes(fastify) {
     });
     auditar({ acao: 'UPDATE', tabela: 'marcacoes', registro_id: id, dados_anteriores: { data_hora: marcacao.data_hora }, dados_novos: { data_hora: normalized, motivo: justificativa || motivo || null, dia_referencia }, usuario_id: request.user.id, ip: request.ip });
     return successResponse({ id }, 'Batida atualizada');
+  });
+
+  // ── Bloqueio de dia ─────────────────────────────────────────────────────────
+
+  const bloquearSchema = {
+    body: {
+      type: 'object',
+      required: ['funcionario_id', 'data'],
+      properties: {
+        funcionario_id: { type: 'integer', minimum: 1 },
+        data: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+    },
+  };
+
+  fastify.post('/marcacoes/bloquear-dia', { schema: bloquearSchema }, async (request, reply) => {
+    if (request.user.role !== 'admin' && request.user.role !== 'gestor') {
+      return reply.code(403).send({ error: 'Acesso negado', message: 'Sem permissão para bloquear dias' });
+    }
+
+    const { funcionario_id, data } = request.body;
+
+    const [func] = await query('SELECT empresa_id FROM funcionarios WHERE id = ? LIMIT 1', [funcionario_id]);
+    if (!func || func.empresa_id !== request.empresaId) {
+      return reply.code(404).send({ error: 'Não encontrado', message: 'Funcionário não encontrado' });
+    }
+
+    await query(
+      `INSERT INTO marcacoes_dia_bloqueado (empresa_id, funcionario_id, data, bloqueado_por)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE bloqueado_por = VALUES(bloqueado_por), bloqueado_at = CURRENT_TIMESTAMP`,
+      [request.empresaId, funcionario_id, data, request.user.id],
+    );
+
+    auditar({ acao: 'INSERT', tabela: 'marcacoes_dia_bloqueado', registro_id: `${funcionario_id}-${data}`, dados_anteriores: null, dados_novos: { funcionario_id, data }, usuario_id: request.user.id, ip: request.ip });
+    return reply.code(201).send(successResponse({ funcionario_id, data, bloqueado: true }, 'Dia bloqueado'));
+  });
+
+  fastify.delete('/marcacoes/bloquear-dia/:funcionario_id/:data', {
+    schema: {
+      params: {
+        type: 'object',
+        required: ['funcionario_id', 'data'],
+        properties: {
+          funcionario_id: { type: 'string', pattern: '^[0-9]+$' },
+          data: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    if (request.user.role !== 'admin' && request.user.role !== 'gestor') {
+      return reply.code(403).send({ error: 'Acesso negado', message: 'Sem permissão para desbloquear dias' });
+    }
+
+    const funcionario_id = parseInt(request.params.funcionario_id, 10);
+    const { data } = request.params;
+
+    await query(
+      'DELETE FROM marcacoes_dia_bloqueado WHERE funcionario_id = ? AND data = ?',
+      [funcionario_id, data],
+    );
+
+    auditar({ acao: 'DELETE', tabela: 'marcacoes_dia_bloqueado', registro_id: `${funcionario_id}-${data}`, dados_anteriores: { funcionario_id, data }, dados_novos: null, usuario_id: request.user.id, ip: request.ip });
+    return successResponse({ funcionario_id, data, bloqueado: false }, 'Dia desbloqueado');
+  });
+
+  const diasBloqueadosQuerySchema = {
+    querystring: {
+      type: 'object',
+      required: ['funcionario_id', 'data_inicio', 'data_fim'],
+      properties: {
+        funcionario_id: { type: 'string', pattern: '^[0-9]+$' },
+        data_inicio: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        data_fim: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+    },
+  };
+
+  fastify.get('/marcacoes/dias-bloqueados', { schema: diasBloqueadosQuerySchema }, async (request) => {
+    const funcionario_id = parseInt(request.query.funcionario_id, 10);
+    const { data_inicio, data_fim } = request.query;
+
+    if (request.user.role !== 'admin' && request.user.role !== 'gestor' && request.user.id !== funcionario_id) {
+      return { success: true, data: [] };
+    }
+
+    const rows = await query(
+      `SELECT DATE_FORMAT(data, '%Y-%m-%d') AS data
+         FROM marcacoes_dia_bloqueado
+        WHERE funcionario_id = ? AND data BETWEEN ? AND ?
+        ORDER BY data ASC`,
+      [funcionario_id, data_inicio, data_fim],
+    );
+
+    return successResponse(rows.map((r) => r.data));
   });
 
   fastify.delete('/marcacoes/:id', async (request, reply) => {
