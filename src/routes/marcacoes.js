@@ -331,6 +331,160 @@ export default async function marcacaoRoutes(fastify) {
     return successResponse({ funcionario_id, data, bloqueado: false }, 'Dia desbloqueado');
   });
 
+  const bloquearPeriodoSchema = {
+    body: {
+      type: 'object',
+      required: ['data_inicio', 'data_fim'],
+      properties: {
+        data_inicio:     { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        data_fim:        { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        funcionario_ids: { type: 'array', items: { type: 'integer', minimum: 1 }, maxItems: 2000 },
+      },
+    },
+  };
+
+  fastify.post('/marcacoes/bloquear-periodo', { schema: bloquearPeriodoSchema }, async (request, reply) => {
+    if (request.user.role !== 'admin' && request.user.role !== 'gestor') {
+      return reply.code(403).send({ error: 'Acesso negado', message: 'Sem permissão para bloquear períodos' });
+    }
+
+    const { data_inicio, data_fim, funcionario_ids } = request.body;
+
+    if (data_inicio > data_fim) {
+      return reply.code(400).send({ error: 'Parâmetro inválido', message: 'Data início deve ser anterior ou igual à data fim' });
+    }
+
+    // Gera todos os dias do período
+    const datas = [];
+    const cur = new Date(data_inicio + 'T12:00:00Z');
+    const fim = new Date(data_fim + 'T12:00:00Z');
+    while (cur <= fim) {
+      datas.push(cur.toISOString().slice(0, 10));
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    if (datas.length > 366) {
+      return reply.code(400).send({ error: 'Parâmetro inválido', message: 'Período máximo de 366 dias' });
+    }
+
+    // Busca funcionários válidos da empresa
+    let funcIds;
+    if (funcionario_ids && funcionario_ids.length > 0) {
+      const rows = await query(
+        `SELECT id FROM funcionarios WHERE id IN (${funcionario_ids.map(() => '?').join(',')}) AND empresa_id = ? AND ativo = 1`,
+        [...funcionario_ids, request.empresaId],
+      );
+      funcIds = rows.map((r) => r.id);
+    } else {
+      const rows = await query(
+        'SELECT id FROM funcionarios WHERE empresa_id = ? AND ativo = 1',
+        [request.empresaId],
+      );
+      funcIds = rows.map((r) => r.id);
+    }
+
+    if (funcIds.length === 0) {
+      return reply.code(404).send({ error: 'Não encontrado', message: 'Nenhum funcionário ativo encontrado' });
+    }
+
+    // Monta pares e insere em lotes de 500 para não estourar max_allowed_packet
+    const pares = [];
+    for (const funcId of funcIds) {
+      for (const data of datas) {
+        pares.push([request.empresaId, funcId, data, request.user.id]);
+      }
+    }
+
+    const LOTE = 500;
+    for (let i = 0; i < pares.length; i += LOTE) {
+      const lote = pares.slice(i, i + LOTE);
+      const placeholders = lote.map(() => '(?, ?, ?, ?)').join(', ');
+      await query(
+        `INSERT INTO marcacoes_dia_bloqueado (empresa_id, funcionario_id, data, bloqueado_por)
+         VALUES ${placeholders}
+         ON DUPLICATE KEY UPDATE bloqueado_por = VALUES(bloqueado_por), bloqueado_at = CURRENT_TIMESTAMP`,
+        lote.flat(),
+      );
+    }
+
+    auditar({
+      acao: 'INSERT',
+      tabela: 'marcacoes_dia_bloqueado',
+      registro_id: `periodo-${data_inicio}-${data_fim}`,
+      dados_anteriores: null,
+      dados_novos: { data_inicio, data_fim, funcionarios: funcIds.length, dias: datas.length },
+      usuario_id: request.user.id,
+      ip: request.ip,
+    });
+
+    return reply.code(201).send(successResponse(
+      { funcionarios: funcIds.length, dias: datas.length, total: funcIds.length * datas.length },
+      `${funcIds.length * datas.length} dias bloqueados`,
+    ));
+  });
+
+  const desbloquearPeriodoSchema = {
+    body: {
+      type: 'object',
+      required: ['data_inicio', 'data_fim'],
+      properties: {
+        data_inicio:     { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        data_fim:        { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        funcionario_ids: { type: 'array', items: { type: 'integer', minimum: 1 }, maxItems: 2000 },
+      },
+    },
+  };
+
+  fastify.post('/marcacoes/desbloquear-periodo', { schema: desbloquearPeriodoSchema }, async (request, reply) => {
+    if (request.user.role !== 'admin' && request.user.role !== 'gestor') {
+      return reply.code(403).send({ error: 'Acesso negado', message: 'Sem permissão para desbloquear períodos' });
+    }
+
+    const { data_inicio, data_fim, funcionario_ids } = request.body;
+
+    if (data_inicio > data_fim) {
+      return reply.code(400).send({ error: 'Parâmetro inválido', message: 'Data início deve ser anterior ou igual à data fim' });
+    }
+
+    let funcIds;
+    if (funcionario_ids && funcionario_ids.length > 0) {
+      const rows = await query(
+        `SELECT id FROM funcionarios WHERE id IN (${funcionario_ids.map(() => '?').join(',')}) AND empresa_id = ? AND ativo = 1`,
+        [...funcionario_ids, request.empresaId],
+      );
+      funcIds = rows.map((r) => r.id);
+    } else {
+      const rows = await query(
+        'SELECT id FROM funcionarios WHERE empresa_id = ? AND ativo = 1',
+        [request.empresaId],
+      );
+      funcIds = rows.map((r) => r.id);
+    }
+
+    if (funcIds.length === 0) {
+      return reply.code(404).send({ error: 'Não encontrado', message: 'Nenhum funcionário ativo encontrado' });
+    }
+
+    const result = await query(
+      `DELETE FROM marcacoes_dia_bloqueado
+       WHERE empresa_id = ? AND funcionario_id IN (${funcIds.map(() => '?').join(',')}) AND data BETWEEN ? AND ?`,
+      [request.empresaId, ...funcIds, data_inicio, data_fim],
+    );
+
+    const removidos = result.affectedRows ?? 0;
+
+    auditar({
+      acao: 'DELETE',
+      tabela: 'marcacoes_dia_bloqueado',
+      registro_id: `periodo-${data_inicio}-${data_fim}`,
+      dados_anteriores: { data_inicio, data_fim, funcionarios: funcIds.length },
+      dados_novos: null,
+      usuario_id: request.user.id,
+      ip: request.ip,
+    });
+
+    return successResponse({ removidos }, `${removidos} dias desbloqueados`);
+  });
+
   const diasBloqueadosQuerySchema = {
     querystring: {
       type: 'object',
