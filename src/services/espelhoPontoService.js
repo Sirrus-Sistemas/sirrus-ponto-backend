@@ -295,12 +295,20 @@ export const EspelhoPontoService = {
     );
     const tzOffsetMs = parseTzOffsetMs(tzOffset);
 
-    const [rows, feriadosRows, turnoRow, ocorrencias] = await Promise.all([
+    const [rows, feriadosRows, turnoRow, ocorrencias, diasBloqRows] = await Promise.all([
       MarcacaoRepository.findByFuncionarioMonth(funcionarioId, year, month, tzOffset),
       FeriadoRepository.listByEmpresaMonth(empresaId, year, month),
       FuncionarioRepository.findTurnoJornada(funcionarioId),
       OcorrenciaRepository.findByFuncionarioMonth(funcionarioId, year, month),
+      query(
+        `SELECT DATE_FORMAT(data, '%Y-%m-%d') AS data
+           FROM marcacoes_dia_bloqueado
+          WHERE funcionario_id = ? AND data BETWEEN ? AND ?`,
+        [funcionarioId, dataInicio, dataFim],
+      ),
     ]);
+
+    const bloqueadoSet = new Set(diasBloqRows.map((d) => d.data));
 
     // Load per-day turno hours and lotação rules in parallel
     const turnoHorariosMap = new Map();
@@ -597,6 +605,7 @@ export const EspelhoPontoService = {
         status,
         modifiers,
         dia_trabalho: ehDiaTrabalho,
+        bloqueado: bloqueadoSet.has(data),
         feriado,
         horarios_previstos,
         ocorrencia: ocorrencia
