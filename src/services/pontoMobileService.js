@@ -390,9 +390,14 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
       const tipo = item.origem === 'REP' ? 'rep' : 'online';
 
       // Verifica se o dia de referência desta batida está bloqueado.
-      // Dia de referência = DATE(UTC - 5h), mesma lógica do espelho/ficha.
+      // diaRef = DATE(T_local - 5h), mesma fórmula do SQL da ficha:
+      //   DATE(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', tzOffset))
+      // Usa o fuso do funcionário (municipio), NÃO item.fuso da API mobile,
+      // para garantir coerência com o que a ficha exibe.
       const utcMs = new Date(dataHoraUtc.replace(' ', 'T') + 'Z').getTime();
-      const diaRef = new Date(utcMs - 5 * 3600000).toISOString().slice(0, 10);
+      const fusoNum = fusoHorarioToNumber(funcEntry.fusoHorario); // ex.: -3 para UTC-3
+      const localMs = utcMs + fusoNum * 3600000;                  // UTC → horário local
+      const diaRef = new Date(localMs - 5 * 3600000).toISOString().slice(0, 10);
       if (bloqueados.has(`${localFuncId}-${diaRef}`)) {
         bloqueados_count++;
         continue;
