@@ -112,7 +112,8 @@ export default async function marcacaoRoutes(fastify) {
     const tzOffset = fusoHorarioToTzOffset(func.fuso_horario ?? empresa?.municipio_fuso_horario);
 
     const dataInicio = `${ano}-${String(mes).padStart(2, '0')}-01`;
-    const dataFim = `${ano}-${String(mes).padStart(2, '0')}-31`;
+    const ultimoDia = new Date(ano, mes, 0).getDate();
+    const dataFim = `${ano}-${String(mes).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`;
 
     const [rows, diasBloq] = await Promise.all([
       MarcacaoRepository.findByFuncionarioMonth(funcionarioId, ano, mes, tzOffset),
