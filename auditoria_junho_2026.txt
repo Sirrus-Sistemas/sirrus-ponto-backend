@@ -1,0 +1,89 @@
+🔍 AUDITORIA JUNHO 2026 - BATIDAS DUPLICADAS
+
+📊 Total de funcionários com batidas duplicadas em junho: 53
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+AUDITORIA DETALHADA - JUNHO 2026
+════════════════════════════════════════════════════════════════════════════════════════════════════
+#    Nome                                     Horas        Dias   Inc   Batidas  Saldo     
+────────────────────────────────────────────────────────────────────────────────────────────────────
+1    SANDRO ODARY FURTADO                     392h57m      29     16    193      +243h53m  
+2    RAFAELSON ARCANJO DOS SANTOS             375h37m      29     12    202      +187h52m  
+3    WILLIAN LIMA ALVES                       369h06m      28     11    190      +227h33m  
+4    GLAUBER GONCALVES FARIAS PEREIRA         358h01m      30     12    201      +200h30m  
+5    NADYA CHRISTINA DE BARROS ASVOLINSQUE    343h42m      30     18    211      +168h35m  
+6    BENEDITO FILHO MORAES                    339h18m      30     23    229      +184h18m  
+7    MARIA AUXILIADORA DO NASCIMENTO RODRIGUE 330h57m      30     17    207      +179h36m  
+8    DIEGO OLIVEIRA DA SILVA 
+               330h01m      30     27    219      +202h43m  
+9    MARILIA FERNANDES DA SILVA               316h21m      30     15    201      +168h53m  
+10   ANA RAFAELA LOPES DE OLIVEIRA            290h34m      28     17    192      +132h54m  
+11   PEDRO HENRIQUE CASTOLDI                  268h29m      30     24    212      +111h35m  
+12   KLEBER CAMPOS MARINHO                    262h33m      30     24    214      +109h4m   
+13   ANDRE LUIS GASPAR DA GUIA                200h43m      27     11    216      +56h32m   
+14   ITALO NABOR DE FARIA                     197h23m      30     26    219      +46h47m   
+15   MATEUS CORREIA DE OLIVEIRA               190h29m      25     9     203      +13h48m   
+16   GABRIEL SANTANA DE CAMARGO               186h04m      30     19    206      +13h8m    
+17   ELIANE SCHIRLEI WEBER                    183h16m      21     1     83       -9h-21m   
+18   ERISLANDIA PATRICIA SERRAO DE SOUZA      174h34m      23     15    144      +61h12m   
+19   DANIELLE EDUARDA SILVA                   142h39m      25     0     201      +13h46m   
+20   RAFAELA TEIXEIRA PATEK                   142h28m      24     1     195      -28h-24m  
+21   LUIZ GUSTAVO DA SILVA                    142h15m      25     0     201      -28h-41m  
+22   DAYANA SIQUEIRA COSTA                    141h15m      25     0     201      -41h-11m  
+23   KATIA ELISE SILVA GASPAR DA GUIA         134h47m      25     0     201      -12h-3m   
+24   VERUSCA SILVA ANUNCIACAO VENANCIO        129h51m      29     10    201      -18h-52m  
+25   PAULO ROBERTO DE FIGUEIREDO              129h10m      26     2     202      -15h-13m  
+26   JULIO CESAR GONCALVES DOS SANTOS         128h06m      26     3     202      -18h-44m  
+27   ADILSON RIBEIRO DE BARROS                126h14m      27     9     215      -23h-3m   
+28   ELLEN REGINA DA SILVA MOREIRA            125h15m      24     0     197      -15h-45m  
+29   ANDREIA AMORIM DE OLIVEIRA SENE          124h30m      24     2     197      -11h-44m  
+30   ANYELLY CRISTYNE SANTOS HENICKA          123h52m      23     0     185      -6h-32m   
+31   DANIELE DE LIMA SOUZA
+                  123h19m      24     1     194      -17h-41m  
+32   EDIMAR JOSE RIBEIRO 
+                   121h53m      25     2     205      -19h-50m  
+33   MARIA CAROLINA DE ALMEIDA FARIA LUCIO    119h51m      27     6     196      -17h-58m  
+34   MARCELLY GOMES DA COSTA                  118h08m      25     3     200      -23h-42m  
+35   LAIS RIBEIRO DE SOUZA                    113h58m      28     11    193      -30h-44m  
+36   ERONICE MARTINS DE SOUZA                 108h56m      20     1     164      -8h-44m   
+37   RAFAEVERSON FIDELIS DOS SANTOS           105h07m      26     11    201      -34h-5m   
+38   MARIANA ALVES SILVA                      94h30m       20     0     81       -6h-17m   
+39   DAVI PAIVA DA SILVA JUNIOR               92h58m       20     1     80       -7h-22m   
+40   BEATRIZ ARAUJO DA SILVA                  92h42m       20     1     79       -5h-23m   
+41   JULIANA SOUSA SILVA (duplicado)          91h32m       20     1     80       -8h-38m   
+42   CARLA CRISTINA DA SILVA LIMA             91h18m       20     1     79       -6h-55m   
+43   KALINA DA SILVA FERREIRA                 90h31m       20     0     81       -9h-27m   
+44   ANA LUIZA FROTA OLIVEIRA                 88h41m       19     0     77       -6h-51m   
+45   KELLY SCHIMITH SANTOS                    87h27m       19     0     77       -8h-38m   
+46   MARIA LENY BRASIL DA SILVA               78h41m       18     1     74       -10h-10m  
+47   INGRID YASMIM DA SILVA ALMEIDA           75h15m       16     1     64       -6h-42m   
+48   Gustavo Freitas Pereira                  34h38m       8      1     32       -64h-41m  
+49   THAUANY MENDES FERREIRA                  26h47m       5      5     13       -86h-27m  
+50   MATEUS FEITOSA FERREIRA                  20h54m       4      1     24       -92h-16m  
+51   REGINALDO ROCHA DE SOUZA JUNIOR          20h21m       4      4     24       -119h-27m 
+52   ANA PAULA CARLOS DE SOUZA                18h11m       4      4     26       -121h-16m 
+53   IBIS DA SILVA BRAGA                      14h01m       4      4     18       -125h-39m 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+TOTAL                                        8530h06m
+════════════════════════════════════════════════════════════════════════════════════════════════════
+
+📈 Estatísticas de Junho:
+   Funcionários auditados: 53
+   Horas totais: 8530h06m
+   Média por funcionário: 160h57m
+   Dias com marcação (total): 1209
+   Dias incompletos (total): 384
+
+🏆 Top 10 funcionários (por horas):
+
+1. SANDRO ODARY FURTADO : 392h57m
+2. RAFAELSON ARCANJO DOS SANTOS : 375h37m
+3. WILLIAN LIMA ALVES : 369h06m
+4. GLAUBER GONCALVES FARIAS PEREIRA : 358h01m
+5. NADYA CHRISTINA DE BARROS ASVOLINSQUE: 343h42m
+6. BENEDITO FILHO MORAES : 339h18m
+7. MARIA AUXILIADORA DO NASCIMENTO RODRIGUE: 330h57m
+8. DIEGO OLIVEIRA DA SILVA 
+: 330h01m
+9. MARILIA FERNANDES DA SILVA : 316h21m
+10. ANA RAFAELA LOPES DE OLIVEIRA: 290h34m
