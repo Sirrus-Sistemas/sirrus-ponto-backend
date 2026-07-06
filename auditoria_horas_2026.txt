@@ -1,0 +1,580 @@
+🔍 AUDITORIA COMPLETA DE HORAS TRABALHADAS
+
+
+📊 Total de funcionários com batidas duplicadas: 80
+
+Processando auditorias...
+
+═══════════════════════════════════════════════════════════════
+FUNCIONÁRIOS COM BATIDAS DUPLICADAS E HORAS AJUSTADAS
+═══════════════════════════════════════════════════════════════
+
+1. SANDRO ODARY FURTADO 
+   Mês: 2026-06
+   Horas trabalhadas: 392h57m
+   Dias com marcação: 29
+   Dias incompletos: 16
+   Total de batidas: 193
+
+2. RAFAELSON ARCANJO DOS SANTOS 
+   Mês: 2026-06
+   Horas trabalhadas: 375h37m
+   Dias com marcação: 29
+   Dias incompletos: 12
+   Total de batidas: 202
+
+3. WILLIAN LIMA ALVES 
+   Mês: 2026-06
+   Horas trabalhadas: 369h06m
+   Dias com marcação: 28
+   Dias incompletos: 11
+   Total de batidas: 190
+
+4. GLAUBER GONCALVES FARIAS PEREIRA 
+   Mês: 2026-06
+   Horas trabalhadas: 358h01m
+   Dias com marcação: 30
+   Dias incompletos: 12
+   Total de batidas: 201
+
+5. NADYA CHRISTINA DE BARROS ASVOLINSQUE
+   Mês: 2026-06
+   Horas trabalhadas: 343h42m
+   Dias com marcação: 30
+   Dias incompletos: 18
+   Total de batidas: 211
+
+6. MARIA AUXILIADORA DO NASCIMENTO RODRIGUE
+   Mês: 2026-06
+   Horas trabalhadas: 330h57m
+   Dias com marcação: 30
+   Dias incompletos: 17
+   Total de batidas: 207
+
+7. DIEGO OLIVEIRA DA SILVA 
+
+   Mês: 2026-06
+   Horas trabalhadas: 330h01m
+   Dias com marcação: 30
+   Dias incompletos: 27
+   Total de batidas: 219
+
+8. MARILIA FERNANDES DA SILVA 
+   Mês: 2026-06
+   Horas trabalhadas: 316h21m
+   Dias com marcação: 30
+   Dias incompletos: 15
+   Total de batidas: 201
+
+9. ANA RAFAELA LOPES DE OLIVEIRA
+   Mês: 2026-06
+   Horas trabalhadas: 290h34m
+   Dias com marcação: 28
+   Dias incompletos: 17
+   Total de batidas: 192
+
+10. PEDRO HENRIQUE CASTOLDI 
+   Mês: 2026-06
+   Horas trabalhadas: 268h29m
+   Dias com marcação: 30
+   Dias incompletos: 24
+   Total de batidas: 212
+
+11. GIOVANNA SOUSA FERRAI
+   Mês: 2026-05
+   Horas trabalhadas: 234h25m
+   Dias com marcação: 25
+   Dias incompletos: 13
+   Total de batidas: 119
+
+12. ANDRE LUIS GASPAR DA GUIA
+   Mês: 2026-06
+   Horas trabalhadas: 200h43m
+   Dias com marcação: 27
+   Dias incompletos: 11
+   Total de batidas: 216
+
+13. ITALO NABOR DE FARIA 
+   Mês: 2026-06
+   Horas trabalhadas: 197h23m
+   Dias com marcação: 30
+   Dias incompletos: 26
+   Total de batidas: 219
+
+14. MATEUS CORREIA DE OLIVEIRA
+   Mês: 2026-06
+   Horas trabalhadas: 190h29m
+   Dias com marcação: 25
+   Dias incompletos: 9
+   Total de batidas: 203
+
+15. GABRIEL SANTANA DE CAMARGO 
+   Mês: 2026-06
+   Horas trabalhadas: 186h04m
+   Dias com marcação: 30
+   Dias incompletos: 19
+   Total de batidas: 206
+
+16. ELIANE SCHIRLEI WEBER
+   Mês: 2026-06
+   Horas trabalhadas: 183h16m
+   Dias com marcação: 21
+   Dias incompletos: 1
+   Total de batidas: 83
+
+17. ERISLANDIA PATRICIA SERRAO DE SOUZA 
+   Mês: 2026-06
+   Horas trabalhadas: 174h34m
+   Dias com marcação: 23
+   Dias incompletos: 15
+   Total de batidas: 144
+
+18. KLERI REGIANE DE OLIVEIRA
+   Mês: 2026-05
+   Horas trabalhadas: 170h08m
+   Dias com marcação: 20
+   Dias incompletos: 1
+   Total de batidas: 80
+
+19. DANIELLE EDUARDA SILVA
+   Mês: 2026-06
+   Horas trabalhadas: 142h39m
+   Dias com marcação: 25
+   Dias incompletos: 0
+   Total de batidas: 201
+
+20. RAFAELA TEIXEIRA PATEK
+   Mês: 2026-06
+   Horas trabalhadas: 142h28m
+   Dias com marcação: 24
+   Dias incompletos: 1
+   Total de batidas: 195
+
+21. LUIZ GUSTAVO DA SILVA
+   Mês: 2026-06
+   Horas trabalhadas: 142h15m
+   Dias com marcação: 25
+   Dias incompletos: 0
+   Total de batidas: 201
+
+22. DAYANA SIQUEIRA COSTA
+   Mês: 2026-06
+   Horas trabalhadas: 141h15m
+   Dias com marcação: 25
+   Dias incompletos: 0
+   Total de batidas: 201
+
+23. KATIA ELISE SILVA GASPAR DA GUIA
+   Mês: 2026-06
+   Horas trabalhadas: 134h47m
+   Dias com marcação: 25
+   Dias incompletos: 0
+   Total de batidas: 201
+
+24. PABLO RUAN DE MORAIS LIMA
+   Mês: 2026-05
+   Horas trabalhadas: 131h11m
+   Dias com marcação: 24
+   Dias incompletos: 0
+   Total de batidas: 146
+
+25. VERUSCA SILVA ANUNCIACAO VENANCIO 
+   Mês: 2026-06
+   Horas trabalhadas: 129h51m
+   Dias com marcação: 29
+   Dias incompletos: 10
+   Total de batidas: 201
+
+26. PAULO ROBERTO DE FIGUEIREDO 
+   Mês: 2026-06
+   Horas trabalhadas: 129h10m
+   Dias com marcação: 26
+   Dias incompletos: 2
+   Total de batidas: 202
+
+27. JULIO CESAR GONCALVES DOS SANTOS
+   Mês: 2026-06
+   Horas trabalhadas: 128h06m
+   Dias com marcação: 26
+   Dias incompletos: 3
+   Total de batidas: 202
+
+28. ADILSON RIBEIRO DE BARROS
+   Mês: 2026-06
+   Horas trabalhadas: 126h14m
+   Dias com marcação: 27
+   Dias incompletos: 9
+   Total de batidas: 215
+
+29. ELLEN REGINA DA SILVA MOREIRA
+   Mês: 2026-06
+   Horas trabalhadas: 125h15m
+   Dias com marcação: 24
+   Dias incompletos: 0
+   Total de batidas: 197
+
+30. ANDREIA AMORIM DE OLIVEIRA SENE 
+   Mês: 2026-06
+   Horas trabalhadas: 124h30m
+   Dias com marcação: 24
+   Dias incompletos: 2
+   Total de batidas: 197
+
+31. MARIANA LISBOA ALVES DE JESUS 
+   Mês: 2026-05
+   Horas trabalhadas: 124h07m
+   Dias com marcação: 25
+   Dias incompletos: 4
+   Total de batidas: 198
+
+32. ANYELLY CRISTYNE SANTOS HENICKA
+   Mês: 2026-06
+   Horas trabalhadas: 123h52m
+   Dias com marcação: 23
+   Dias incompletos: 0
+   Total de batidas: 185
+
+33. DANIELE DE LIMA SOUZA
+
+   Mês: 2026-06
+   Horas trabalhadas: 123h19m
+   Dias com marcação: 24
+   Dias incompletos: 1
+   Total de batidas: 194
+
+34. MIGUEL FEITOSA FERREIRA 
+   Mês: 2026-05
+   Horas trabalhadas: 122h54m
+   Dias com marcação: 24
+   Dias incompletos: 4
+   Total de batidas: 141
+
+35. EDIMAR JOSE RIBEIRO 
+
+   Mês: 2026-06
+   Horas trabalhadas: 121h53m
+   Dias com marcação: 25
+   Dias incompletos: 2
+   Total de batidas: 205
+
+36. ANDRE SOUZA DA SILVA
+   Mês: 2026-05
+   Horas trabalhadas: 120h01m
+   Dias com marcação: 22
+   Dias incompletos: 18
+   Total de batidas: 131
+
+37. MARIA CAROLINA DE ALMEIDA FARIA LUCIO
+   Mês: 2026-06
+   Horas trabalhadas: 119h51m
+   Dias com marcação: 27
+   Dias incompletos: 6
+   Total de batidas: 196
+
+38. MARCELLY GOMES DA COSTA
+   Mês: 2026-06
+   Horas trabalhadas: 118h08m
+   Dias com marcação: 25
+   Dias incompletos: 3
+   Total de batidas: 200
+
+39. MATHEUS HONORATO DE MENEZES
+   Mês: 2026-05
+   Horas trabalhadas: 114h55m
+   Dias com marcação: 24
+   Dias incompletos: 2
+   Total de batidas: 138
+
+40. LAIS RIBEIRO DE SOUZA 
+   Mês: 2026-06
+   Horas trabalhadas: 113h58m
+   Dias com marcação: 28
+   Dias incompletos: 11
+   Total de batidas: 193
+
+41. RENAN REIS SAMPAIO
+   Mês: 2026-05
+   Horas trabalhadas: 110h54m
+   Dias com marcação: 23
+   Dias incompletos: 5
+   Total de batidas: 129
+
+42. ERONICE MARTINS DE SOUZA
+   Mês: 2026-06
+   Horas trabalhadas: 108h56m
+   Dias com marcação: 20
+   Dias incompletos: 1
+   Total de batidas: 164
+
+43. MARIA NATHYELLE DOURADO SOUSA
+   Mês: 2026-05
+   Horas trabalhadas: 107h33m
+   Dias com marcação: 20
+   Dias incompletos: 7
+   Total de batidas: 140
+
+44. ISABELLE NERI FERREIRA GOMES
+   Mês: 2026-05
+   Horas trabalhadas: 105h23m
+   Dias com marcação: 23
+   Dias incompletos: 6
+   Total de batidas: 132
+
+45. RAFAEVERSON FIDELIS DOS SANTOS 
+   Mês: 2026-06
+   Horas trabalhadas: 105h07m
+   Dias com marcação: 26
+   Dias incompletos: 11
+   Total de batidas: 201
+
+46. CHIRLEY FEITOSA BENTO
+   Mês: 2026-05
+   Horas trabalhadas: 104h53m
+   Dias com marcação: 21
+   Dias incompletos: 5
+   Total de batidas: 123
+
+47. SINAIRA MOURA DA SILVA
+   Mês: 2026-05
+   Horas trabalhadas: 104h42m
+   Dias com marcação: 22
+   Dias incompletos: 18
+   Total de batidas: 130
+
+48. GABRIELA COTA DOS SANTOS
+   Mês: 2026-05
+   Horas trabalhadas: 104h37m
+   Dias com marcação: 19
+   Dias incompletos: 11
+   Total de batidas: 61
+
+49. HYLLBERTO SOARES DO CARMO
+   Mês: 2026-05
+   Horas trabalhadas: 104h32m
+   Dias com marcação: 22
+   Dias incompletos: 3
+   Total de batidas: 129
+
+50. CRISTHYAN BARBOZA DE ARAUJO
+   Mês: 2026-05
+   Horas trabalhadas: 101h28m
+   Dias com marcação: 22
+   Dias incompletos: 18
+   Total de batidas: 120
+
+51. MARIANA ALVES SILVA
+   Mês: 2026-06
+   Horas trabalhadas: 94h30m
+   Dias com marcação: 20
+   Dias incompletos: 0
+   Total de batidas: 81
+
+52. DAVI PAIVA DA SILVA JUNIOR
+   Mês: 2026-06
+   Horas trabalhadas: 92h58m
+   Dias com marcação: 20
+   Dias incompletos: 1
+   Total de batidas: 80
+
+53. BEATRIZ ARAUJO DA SILVA
+   Mês: 2026-06
+   Horas trabalhadas: 92h42m
+   Dias com marcação: 20
+   Dias incompletos: 1
+   Total de batidas: 79
+
+54. JULIANA SOUSA SILVA (duplicado)
+   Mês: 2026-06
+   Horas trabalhadas: 91h32m
+   Dias com marcação: 20
+   Dias incompletos: 1
+   Total de batidas: 80
+
+55. CARLA CRISTINA DA SILVA LIMA
+   Mês: 2026-06
+   Horas trabalhadas: 91h18m
+   Dias com marcação: 20
+   Dias incompletos: 1
+   Total de batidas: 79
+
+56. KALINA DA SILVA FERREIRA
+   Mês: 2026-06
+   Horas trabalhadas: 90h31m
+   Dias com marcação: 20
+   Dias incompletos: 0
+   Total de batidas: 81
+
+57. WELITON MAKI SILVA RODRIGUES
+   Mês: 2026-05
+   Horas trabalhadas: 89h16m
+   Dias com marcação: 24
+   Dias incompletos: 17
+   Total de batidas: 154
+
+58. ANA LUIZA FROTA OLIVEIRA
+   Mês: 2026-06
+   Horas trabalhadas: 88h41m
+   Dias com marcação: 19
+   Dias incompletos: 0
+   Total de batidas: 77
+
+59. JACQUELINE DE OLIVEIRA FERREIRA
+   Mês: 2026-05
+   Horas trabalhadas: 87h51m
+   Dias com marcação: 20
+   Dias incompletos: 6
+   Total de batidas: 111
+
+60. KELLY SCHIMITH SANTOS
+   Mês: 2026-06
+   Horas trabalhadas: 87h27m
+   Dias com marcação: 19
+   Dias incompletos: 0
+   Total de batidas: 77
+
+61. DANIELLY PEREIRA DAS CHAGAS
+   Mês: 2026-05
+   Horas trabalhadas: 84h39m
+   Dias com marcação: 20
+   Dias incompletos: 2
+   Total de batidas: 79
+
+62. SAMUEL DO NASCIMENTO RAMOS
+   Mês: 2026-05
+   Horas trabalhadas: 82h23m
+   Dias com marcação: 20
+   Dias incompletos: 7
+   Total de batidas: 71
+
+63. BEATRIZ SILVA DE OLIVEIRA
+   Mês: 2026-05
+   Horas trabalhadas: 80h22m
+   Dias com marcação: 17
+   Dias incompletos: 1
+   Total de batidas: 68
+
+64. MARIA LENY BRASIL DA SILVA
+   Mês: 2026-06
+   Horas trabalhadas: 78h41m
+   Dias com marcação: 18
+   Dias incompletos: 1
+   Total de batidas: 74
+
+65. INGRID YASMIM DA SILVA ALMEIDA
+   Mês: 2026-06
+   Horas trabalhadas: 75h15m
+   Dias com marcação: 16
+   Dias incompletos: 1
+   Total de batidas: 64
+
+66. JUSSARA OLIVEIRA DO NASCIMENTO
+   Mês: 2026-05
+   Horas trabalhadas: 72h14m
+   Dias com marcação: 20
+   Dias incompletos: 9
+   Total de batidas: 72
+
+67. ANA JULIA AZEVEDO DA COSTA
+   Mês: 2026-05
+   Horas trabalhadas: 66h56m
+   Dias com marcação: 22
+   Dias incompletos: 19
+   Total de batidas: 96
+
+68. ANELI DE FRANCA OLIVEIRA
+   Mês: 2026-05
+   Horas trabalhadas: 66h48m
+   Dias com marcação: 18
+   Dias incompletos: 5
+   Total de batidas: 68
+
+69. KAYO VINICIUS LIMA BARBOSA
+   Mês: 2026-05
+   Horas trabalhadas: 65h36m
+   Dias com marcação: 18
+   Dias incompletos: 7
+   Total de batidas: 89
+
+70. BENEDITO FILHO MORAES 
+   Mês: 2026-07
+   Horas trabalhadas: 40h00m
+   Dias com marcação: 3
+   Dias incompletos: 2
+   Total de batidas: 19
+
+71. Gustavo Freitas Pereira
+   Mês: 2026-06
+   Horas trabalhadas: 34h38m
+   Dias com marcação: 8
+   Dias incompletos: 1
+   Total de batidas: 32
+
+72. NIRVANA MARLY PASSOS SILVA
+   Mês: 2026-05
+   Horas trabalhadas: 28h48m
+   Dias com marcação: 12
+   Dias incompletos: 11
+   Total de batidas: 55
+
+73. THAUANY MENDES FERREIRA
+   Mês: 2026-06
+   Horas trabalhadas: 26h47m
+   Dias com marcação: 5
+   Dias incompletos: 5
+   Total de batidas: 13
+
+74. MATEUS FEITOSA FERREIRA 
+   Mês: 2026-06
+   Horas trabalhadas: 20h54m
+   Dias com marcação: 4
+   Dias incompletos: 1
+   Total de batidas: 24
+
+75. REGINALDO ROCHA DE SOUZA JUNIOR
+   Mês: 2026-06
+   Horas trabalhadas: 20h21m
+   Dias com marcação: 4
+   Dias incompletos: 4
+   Total de batidas: 24
+
+76. ANA PAULA CARLOS DE SOUZA
+   Mês: 2026-06
+   Horas trabalhadas: 18h11m
+   Dias com marcação: 4
+   Dias incompletos: 4
+   Total de batidas: 26
+
+77. IBIS DA SILVA BRAGA 
+   Mês: 2026-06
+   Horas trabalhadas: 14h01m
+   Dias com marcação: 4
+   Dias incompletos: 4
+   Total de batidas: 18
+
+78. LUCAS FELIPPE FERRANDI VICENTE BARBOSA 
+   Mês: 2026-07
+   Horas trabalhadas: 10h40m
+   Dias com marcação: 2
+   Dias incompletos: 0
+   Total de batidas: 17
+
+79. PIETRA DE PAULA MARTINELLI 
+   Mês: 2026-07
+   Horas trabalhadas: 4h06m
+   Dias com marcação: 2
+   Dias incompletos: 2
+   Total de batidas: 11
+
+80. KLEBER CAMPOS MARINHO
+   Mês: 2026-07
+   Horas trabalhadas: 3h03m
+   Dias com marcação: 3
+   Dias incompletos: 3
+   Total de batidas: 12
+
+═══════════════════════════════════════════════════════════════
+RESUMO FINAL
+═══════════════════════════════════════════════════════════════
+Total de funcionários afetados: 80
+Total de horas trabalhadas (todos): 10572h40m
+Média por funcionário: 132h10m
