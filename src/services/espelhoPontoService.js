@@ -15,6 +15,25 @@ const TIPO_LABEL = {
 };
 
 /**
+ * Deduplica marcações que têm o mesmo minuto (HH:MM).
+ * Mantém apenas a primeira batida de cada minuto.
+ * Mesma lógica do buildSlots do frontend — mantém consistência entre tela e relatório.
+ *
+ * @param {Array} items  Marcações ordenadas cronologicamente.
+ * @returns {Array}      Marcações deduplica das por HH:MM.
+ */
+function deduplicateByHHMM(items) {
+  const seenTimes = new Set();
+  return items.filter(m => {
+    const d = new Date(m.data_hora);
+    const key = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    if (seenTimes.has(key)) return false;
+    seenTimes.add(key);
+    return true;
+  });
+}
+
+/**
  * Distribui marcações em 8 slots posicionais respeitando slot_override.
  * Retorna array esparso de tamanho 8 (null onde não há batida).
  * Mesma lógica do buildSlots do frontend — mantém consistência entre tela e relatório.
@@ -398,7 +417,9 @@ export const EspelhoPontoService = {
       }));
       // Aplica slot_override: garante que relatório e tela usem a mesma ordem de exibição.
       // raw (order by data_hora) continua sendo usado para cálculos de minutos.
-      const marcacoes = applySlotOverride(marcacoesRaw);
+      const marcacoesComOverride = applySlotOverride(marcacoesRaw);
+      // Deduplica por HH:MM — mesma lógica do frontend para consistência
+      const marcacoes = deduplicateByHHMM(marcacoesComOverride);
 
       const { minutos, incompleto: intervaloAberto } = minutosTrabalhadosPar(raw);
       const dow = diaSemanaPt(data);
