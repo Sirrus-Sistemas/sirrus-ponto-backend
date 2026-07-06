@@ -1,0 +1,95 @@
+🔍 AUDITORIA ABRANGENTE - TODOS OS MESES COM DUPLICATAS
+
+📅 Períodos com duplicatas encontrados: 4
+
+   2026-07: 59 funcionário(s)
+   2026-06: 242 funcionário(s)
+   2026-05: 241 funcionário(s)
+   2026-04: 54 funcionário(s)
+
+════════════════════════════════════════════════════════════════════════════════
+AUDITORIA POR PERÍODO
+════════════════════════════════════════════════════════════════════════════════
+
+
+📌 PERÍODO: 2026-07
+────────────────────────────────────────────────────────────────────────────────
+
+Total de funcionários: 59
+Top 5 neste período:
+
+1. BENEDITO FILHO MORAES 
+   40h00m | 3 dias | 2 incompletos | 19 batidas
+2. ITALO NABOR DE FARIA 
+   38h06m | 3 dias | 2 incompletos | 20 batidas
+3. MARILIA FERNANDES DA SILVA 
+   37h35m | 3 dias | 1 incompletos | 19 batidas
+4. ANA RAFAELA LOPES DE OLIVEIRA
+   37h32m | 3 dias | 1 incompletos | 19 batidas
+5. MARIA AUXILIADORA DO NASCIMENTO RODRIGUE
+   22h41m | 3 dias | 3 incompletos | 16 batidas
+
+Total do período: 681h13m
+
+📌 PERÍODO: 2026-06
+────────────────────────────────────────────────────────────────────────────────
+
+Total de funcionários: 242
+Top 5 neste período:
+
+1. SANDRO ODARY FURTADO 
+   392h57m | 29 dias | 16 incompletos | 193 batidas
+2. PIETRA DE PAULA MARTINELLI 
+   387h10m | 29 dias | 10 incompletos | 197 batidas
+3. RAFAELSON ARCANJO DOS SANTOS 
+   375h37m | 29 dias | 12 incompletos | 202 batidas
+4. WILLIAN LIMA ALVES 
+   369h06m | 28 dias | 11 incompletos | 190 batidas
+5. GLAUBER GONCALVES FARIAS PEREIRA 
+   358h01m | 30 dias | 12 incompletos | 201 batidas
+
+Total do período: 23873h32m
+
+📌 PERÍODO: 2026-05
+────────────────────────────────────────────────────────────────────────────────
+
+Total de funcionários: 241
+Top 5 neste período:
+
+1. RAFAELSON ARCANJO DOS SANTOS 
+   386h57m | 30 dias | 13 incompletos | 196 batidas
+2. MARILIA FERNANDES DA SILVA 
+   385h46m | 31 dias | 11 incompletos | 205 batidas
+3. BENEDITO FILHO MORAES 
+   382h03m | 31 dias | 17 incompletos | 212 batidas
+4. ITALO NABOR DE FARIA 
+   378h25m | 31 dias | 20 incompletos | 215 batidas
+5. ERISLANDIA PATRICIA SERRAO DE SOUZA 
+   374h38m | 31 dias | 12 incompletos | 200 batidas
+
+Total do período: 31514h48m
+
+📌 PERÍODO: 2026-04
+────────────────────────────────────────────────────────────────────────────────
+
+Total de funcionários: 54
+Top 5 neste período:
+
+1. REGINALDO ROCHA DE SOUZA JUNIOR
+   4h41m | 1 dias | 1 incompletos | 4 batidas
+2. NADYA CHRISTINA DE BARROS ASVOLINSQUE
+   3h37m | 1 dias | 1 incompletos | 5 batidas
+3. GABRIEL SANTANA DE CAMARGO 
+   3h32m | 1 dias | 1 incompletos | 4 batidas
+4. ERISLANDIA PATRICIA SERRAO DE SOUZA 
+   3h16m | 1 dias | 1 incompletos | 5 batidas
+5. ANA RAFAELA LOPES DE OLIVEIRA
+   3h14m | 1 dias | 1 incompletos | 5 batidas
+
+Total do período: 73h35m
+
+════════════════════════════════════════════════════════════════════════════════
+RESUMO GERAL
+════════════════════════════════════════════════════════════════════════════════
+Total de horas (todos os períodos): 56143h8m
+Total de dias com marcação: 9316
