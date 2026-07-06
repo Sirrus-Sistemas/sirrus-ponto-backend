@@ -421,11 +421,12 @@ export const EspelhoPontoService = {
       // Deduplica por HH:MM — mesma lógica do frontend para consistência
       const marcacoes = deduplicateByHHMM(marcacoesComOverride);
 
-      // Calcula minutos com base nas batidas originais (raw)
-      // Mas detecção de "intervalo aberto" deve usar as batidas deduplica das
-      // para consistência com o frontend
-      const { minutos } = minutosTrabalhadosPar(raw);
-      const intervaloAberto = marcacoes.length > 0 && marcacoes.length % 2 === 1;
+      // Deduplica raw também para cálculo de minutos (consistência com frontend)
+      const rawDedup = deduplicateByHHMM(raw);
+
+      // Calcula minutos com base nas batidas deduplica das
+      const { minutos } = minutosTrabalhadosPar(rawDedup);
+      const intervaloAberto = rawDedup.length > 0 && rawDedup.length % 2 === 1;
       const dow = diaSemanaPt(data);
       const feriadoRaw = feriadosMap.get(data) || null;
       const feriado = feriadoAfetaFuncionario(feriadoRaw, funcionario) ? feriadoRaw : null;
