@@ -36,12 +36,12 @@ export const MarcacaoRepository = {
     return rows[0] || null;
   },
 
-  async insertManual({ funcionarioId, dataHora, motivo, editadoPor, slotOverride }) {
+  async insertManual({ funcionarioId, dataHora, motivo, editadoPor, slotOverride, diaReferencia }) {
     const result = await query(
       `INSERT INTO marcacoes
-         (funcionario_id, data_hora, tipo, motivo_edicao, original, editado_por, slot_override)
-       VALUES (?, ?, 'manual', ?, 0, ?, ?)`,
-      [funcionarioId, dataHora, motivo || 'ESQUECIMENTO', editadoPor ?? null, slotOverride ?? null],
+         (funcionario_id, data_hora, tipo, motivo_edicao, original, editado_por, slot_override, dia_referencia)
+       VALUES (?, ?, 'manual', ?, 0, ?, ?, ?)`,
+      [funcionarioId, dataHora, motivo || 'ESQUECIMENTO', editadoPor ?? null, slotOverride ?? null, diaReferencia ?? null],
     );
     const rows = await query(
       `SELECT id, data_hora, tipo, motivo_edicao, slot_override FROM marcacoes WHERE id = ? LIMIT 1`,

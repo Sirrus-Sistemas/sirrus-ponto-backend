@@ -6,6 +6,8 @@ import {
   syncFuncionario,
   syncAllFuncionarios,
   pullMarcacoes,
+  listarBloqueadas,
+  desbloquearBloqueada,
   isMobileConfigured,
 } from '../services/pontoMobileService.js';
 
@@ -105,8 +107,53 @@ export default async function mobileRoutes(fastify) {
       if (!requireAdmin(request, reply)) return;
       const { filial_id, data_inicio, data_fim, lotacao_id, funcionario_id } = request.body;
       const result = await pullMarcacoes(filial_id, data_inicio, data_fim, lotacao_id ?? null, funcionario_id ?? null);
-      const msg = `Importação concluída: ${result.importados} novas, ${result.ignorados} ignoradas, ${result.bloqueados} em dias bloqueados.`;
+      const msg = `Importação concluída: ${result.importados} novas, ${result.ignorados} ignoradas, ${result.bloqueados} em dias bloqueados, ${result.duplicatas_bloqueadas} bloqueadas por duplicação.`;
       return successResponse(result, msg);
+    },
+  );
+
+  // ── Listar batidas bloqueadas por duplicação ────────────────────────────────
+
+  fastify.get(
+    '/mobile/bloqueadas',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            funcionario_id: { type: 'integer', minimum: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      const funcionarioId = request.query.funcionario_id ?? null;
+      const bloqueadas = await listarBloqueadas(request.empresaId, funcionarioId);
+      return successResponse(bloqueadas);
+    },
+  );
+
+  // ── Desbloquear uma batida ───────────────────────────────────────────────────
+
+  fastify.post(
+    '/mobile/bloqueadas/:id/desbloquear',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'integer', minimum: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      const id = parseInt(request.params.id, 10);
+      const result = await desbloquearBloqueada(id, request.user.id);
+      return successResponse(result, 'Batida desbloqueada e adicionada aos registros.');
     },
   );
 }

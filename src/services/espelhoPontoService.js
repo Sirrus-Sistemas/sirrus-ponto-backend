@@ -106,8 +106,25 @@ function eachCalendarDay(year, month) {
   return days;
 }
 
-function minutosTrabalhadosPar(punches) {
+function minutosTrabalhadosPar(punches, calcularParesSemData = false) {
   if (!punches.length) return { minutos: 0, incompleto: false };
+
+  if (calcularParesSemData) {
+    // Para turnos noturnos: soma pares sequenciais sem reordenar por data_hora
+    // Útil quando o turno cruza meia-noite e batidas estão em dias diferentes
+    let minutos = 0;
+    const pares = [];
+    for (let i = 0; i + 1 < punches.length; i += 2) {
+      const entrada = new Date(punches[i].data_hora).getTime();
+      const saida = new Date(punches[i + 1].data_hora).getTime();
+      const minutosPar = Math.round((saida - entrada) / 60000);
+      pares.push({ entrada: punches[i].data_hora, saida: punches[i + 1].data_hora, minutos: minutosPar });
+      minutos += minutosPar;
+    }
+    return { minutos, incompleto: punches.length % 2 === 1 };
+  }
+
+  // Comportamento original: ordena por data_hora absoluta antes de somar pares
   const times = punches.map((p) => new Date(p.data_hora).getTime()).sort((a, b) => a - b);
   let minutos = 0;
   for (let i = 0; i + 1 < times.length; i += 2) {
@@ -212,8 +229,21 @@ function minutosNocturnosIntervalo(startUtcMs, endUtcMs, noturnoInicioMin, tzOff
   return Math.round(total / 60000);
 }
 
-function minutosNocturnosPar(punches, noturnoInicioMin, tzOffsetMs) {
+function minutosNocturnosPar(punches, noturnoInicioMin, tzOffsetMs, calcularParesSemData = false) {
   if (!punches.length) return 0;
+
+  if (calcularParesSemData) {
+    // Para turnos noturnos: soma pares sequenciais sem reordenar por data_hora
+    let total = 0;
+    for (let i = 0; i + 1 < punches.length; i += 2) {
+      const inicio = new Date(punches[i].data_hora).getTime();
+      const fim = new Date(punches[i + 1].data_hora).getTime();
+      total += minutosNocturnosIntervalo(inicio, fim, noturnoInicioMin, tzOffsetMs);
+    }
+    return total;
+  }
+
+  // Comportamento original: ordena por data_hora absoluta antes de somar pares
   const times = punches.map((p) => new Date(p.data_hora).getTime()).sort((a, b) => a - b);
   let total = 0;
   for (let i = 0; i + 1 < times.length; i += 2) {
@@ -230,8 +260,21 @@ function endOfShiftDayMs(shiftDateStr, tzOffsetMs) {
 }
 
 /** Minutes worked strictly after local midnight of shiftDateStr. */
-function minutosAposMeiaNoite(punches, shiftDateStr, tzOffsetMs) {
+function minutosAposMeiaNoite(punches, shiftDateStr, tzOffsetMs, calcularParesSemData = false) {
   const midnightMs = endOfShiftDayMs(shiftDateStr, tzOffsetMs);
+
+  if (calcularParesSemData) {
+    // Para turnos noturnos: soma pares sequenciais sem reordenar por data_hora
+    let total = 0;
+    for (let i = 0; i + 1 < punches.length; i += 2) {
+      const start = new Date(punches[i].data_hora).getTime();
+      const end = new Date(punches[i + 1].data_hora).getTime();
+      if (end > midnightMs) total += end - Math.max(start, midnightMs);
+    }
+    return Math.round(total / 60000);
+  }
+
+  // Comportamento original: ordena por data_hora absoluta antes de somar pares
   const times = punches.map((p) => new Date(p.data_hora).getTime()).sort((a, b) => a - b);
   let total = 0;
   for (let i = 0; i + 1 < times.length; i += 2) {
@@ -341,7 +384,7 @@ export const EspelhoPontoService = {
           )
         : Promise.resolve([]),
       funcionario?.lotacao_id
-        ? query('SELECT feriado_tipo, domingo_tipo, domingo_nao_previsto_tipo, dia_nao_previsto_tipo, hora_inicio_adicional_noturno, dividir_extras_50_100 FROM lotacoes WHERE id = ?', [funcionario.lotacao_id])
+        ? query('SELECT feriado_tipo, domingo_tipo, domingo_nao_previsto_tipo, dia_nao_previsto_tipo, hora_inicio_adicional_noturno, dividir_extras_50_100, calcula_pares_sequenciais_noturno FROM lotacoes WHERE id = ?', [funcionario.lotacao_id])
         : Promise.resolve([]),
     ]);
     for (const r of thRows) turnoHorariosMap.set(Number(r.dia_semana), r);
@@ -425,7 +468,8 @@ export const EspelhoPontoService = {
       const rawDedup = deduplicateByHHMM(raw);
 
       // Calcula minutos com base nas batidas deduplica das
-      const { minutos } = minutosTrabalhadosPar(rawDedup);
+      const calcularSemData = Number(lotacao?.calcula_pares_sequenciais_noturno) === 1;
+      const { minutos } = minutosTrabalhadosPar(rawDedup, calcularSemData);
       const intervaloAberto = rawDedup.length > 0 && rawDedup.length % 2 === 1;
       const dow = diaSemanaPt(data);
       const feriadoRaw = feriadosMap.get(data) || null;
@@ -577,8 +621,8 @@ export const EspelhoPontoService = {
 
       // dividir_extras_50_100: when a regular-day shift crosses midnight into a 100%-day
       // (Sunday or holiday), split at midnight — after-midnight hours = 100%, before = 50%.
-      if (lotacao?.dividir_extras_50_100 && raw.length >= 2) {
-        const minutosApos = minutosAposMeiaNoite(raw, data, tzOffsetMs);
+      if (lotacao?.dividir_extras_50_100 && rawDedup.length >= 2) {
+        const minutosApos = minutosAposMeiaNoite(rawDedup, data, tzOffsetMs, calcularSemData);
         if (minutosApos > 0) {
           const nextDay = nextDateStr(data);
           const nextDow = (dow + 1) % 7;
@@ -607,7 +651,7 @@ export const EspelhoPontoService = {
       totalExtras50pct  += extras_50pct_minutos;
 
       // Noturno: count minutes in [noturnoInicio, 05:00) local; applies on any day with punches
-      const minutos_noturno = raw.length >= 2 ? minutosNocturnosPar(raw, noturnoInicioMin, tzOffsetMs) : 0;
+      const minutos_noturno = rawDedup.length >= 2 ? minutosNocturnosPar(rawDedup, noturnoInicioMin, tzOffsetMs, calcularSemData) : 0;
       totalMinutosNoturno += minutos_noturno;
 
       // Build expected punch times for justificativa automática
@@ -622,6 +666,23 @@ export const EspelhoPontoService = {
         }
       } else if (funcionario) {
         horarios_previstos = [funcionario.turno_entrada, funcionario.turno_saida_intervalo, funcionario.turno_retorno_intervalo, funcionario.turno_saida].filter(Boolean);
+      }
+
+      // Filtra horarios_previstos: remove os que já têm batidas correspondentes
+      // Converte batidas de UTC para LOCAL usando tzOffsetMs do colaborador
+      if (horarios_previstos.length > 0 && rawDedup.length > 0) {
+        const horasLocaisComBatida = new Set();
+        for (const batida of rawDedup) {
+          // data_hora vem do MySQL como string; converter para Date tratando como UTC
+          // Formato: "2026-06-17 04:00:00" → interpretar como UTC
+          const batidaIso = String(batida.data_hora).replace(' ', 'T') + 'Z';
+          const utcMs = new Date(batidaIso).getTime();
+          const localMs = utcMs + tzOffsetMs;
+          const dtLocal = new Date(localMs);
+          const hhmm = `${String(dtLocal.getUTCHours()).padStart(2, '0')}:${String(dtLocal.getUTCMinutes()).padStart(2, '0')}`;
+          horasLocaisComBatida.add(hhmm);
+        }
+        horarios_previstos = horarios_previstos.filter(hp => !horasLocaisComBatida.has(hp));
       }
 
       return {

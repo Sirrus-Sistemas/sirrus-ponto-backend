@@ -35,3 +35,5 @@ export const PAGINATION = {
   DEFAULT_LIMIT: 20,
   MAX_LIMIT: 10000,
 };
+
+export const PONTO_DUPLICATA_JANELA_SEG = 60; // Janela para detectar grupos de duplicatas (1 minuto)

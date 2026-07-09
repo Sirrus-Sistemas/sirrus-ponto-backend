@@ -166,6 +166,7 @@ export default async function marcacaoRoutes(fastify) {
         motivo: { type: 'string' },
         justificativa: { type: 'string', maxLength: 500 },
         slot_override: { type: 'integer', minimum: 0, maximum: 7, nullable: true },
+        dia_referencia: { type: ['string', 'null'], pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
       },
     },
   };
@@ -175,7 +176,7 @@ export default async function marcacaoRoutes(fastify) {
       return reply.code(403).send({ error: 'Acesso negado', message: 'Sem permissão para lançar batidas' });
     }
 
-    const { funcionario_id, data_hora, motivo, justificativa, slot_override } = request.body;
+    const { funcionario_id, data_hora, motivo, justificativa, slot_override, dia_referencia } = request.body;
 
     const func = await FuncionarioRepository.findById(funcionario_id);
     if (!func || func.empresa_id !== request.empresaId) {
@@ -185,19 +186,23 @@ export default async function marcacaoRoutes(fastify) {
     // Accept ISO or "YYYY-MM-DD HH:MM" and normalise to MySQL DATETIME
     const normalized = data_hora.replace('T', ' ').replace('Z', '').slice(0, 19);
 
-    // Rejeita se já existe batida do mesmo funcionário dentro de 60 segundos
+    // Rejeita se já existe batida do mesmo funcionário no mesmo minuto (HH:MM)
+    // Extrai HH:MM do data_hora normalizado (formato: "2026-06-17 05:01:00")
+    const horaMinutoNormalizado = normalized.slice(11, 16); // "05:01"
+
     const [proxima] = await query(
       `SELECT id, data_hora FROM marcacoes
         WHERE funcionario_id = ?
-          AND ABS(TIMESTAMPDIFF(SECOND, data_hora, ?)) < 60
+          AND DATE_FORMAT(data_hora, '%H:%i') = ?
         LIMIT 1`,
-      [funcionario_id, normalized],
+      [funcionario_id, horaMinutoNormalizado],
     );
+
     if (proxima) {
       const horaExistente = String(proxima.data_hora).slice(11, 16);
       return reply.code(409).send({
         error: 'Duplicata',
-        message: `Já existe uma marcação às ${horaExistente} para este funcionário (menos de 60 segundos de diferença).`,
+        message: `Já existe uma marcação às ${horaExistente} para este funcionário no mesmo minuto.`,
       });
     }
 
@@ -207,6 +212,7 @@ export default async function marcacaoRoutes(fastify) {
       motivo: justificativa || motivo || 'ESQUECIMENTO',
       editadoPor: request.user.id,
       slotOverride: slot_override !== undefined ? slot_override : null,
+      diaReferencia: dia_referencia ?? null,
     });
 
     const responseData = {

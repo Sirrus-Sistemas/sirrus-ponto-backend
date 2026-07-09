@@ -10,6 +10,8 @@
  */
 
 import { query } from '../config/database.js';
+import { PONTO_DUPLICATA_JANELA_SEG } from '../config/constants.js';
+import crypto from 'crypto';
 
 const BASE_URL = (process.env.PONTOMOBILE_URL || '').replace(/\/$/, '');
 
@@ -279,6 +281,85 @@ export async function syncAllFuncionarios(empresaId, filialId = null) {
   return { sincronizados, erros };
 }
 
+// ── Helpers: Detecção e bloqueio de duplicatas ────────────────────────────────
+
+/**
+ * Detecta grupos de 2+ batidas próximas (mesma funcionário, até PONTO_DUPLICATA_JANELA_SEG)
+ * Retorna Map { grupo_id → [item1, item2, ...] }
+ */
+function detectarGruposDuplicatas(items, funcMap) {
+  const grupos = new Map(); // grupo_id → [item1, item2, ...]
+  const processados = new Set();
+
+  for (let i = 0; i < items.length; i++) {
+    if (processados.has(i)) continue;
+
+    const item = items[i];
+    const funcEntry = funcMap.get(Number(item.funcionario_id));
+    if (!funcEntry) continue;
+
+    const grupo = [item];
+    const ts1 = new Date(item.marcacao_at).getTime();
+
+    for (let j = i + 1; j < items.length; j++) {
+      if (processados.has(j)) continue;
+      const item2 = items[j];
+      const funcEntry2 = funcMap.get(Number(item2.funcionario_id));
+      if (!funcEntry2 || funcEntry2.id !== funcEntry.id) continue;
+
+      const ts2 = new Date(item2.marcacao_at).getTime();
+      const diffSeg = Math.abs(ts1 - ts2) / 1000;
+
+      if (diffSeg <= PONTO_DUPLICATA_JANELA_SEG) {
+        grupo.push(item2);
+        processados.add(j);
+      }
+    }
+
+    if (grupo.length >= 2) {
+      // Gera grupo_id: hash do funcionário + primeiro timestamp do grupo
+      const grupoId = crypto
+        .createHash('md5')
+        .update(`${funcEntry.id}-${Math.min(...grupo.map((i) => new Date(i.marcacao_at).getTime()))}`)
+        .digest('hex')
+        .substring(0, 12);
+      grupos.set(grupoId, grupo);
+      processados.add(i);
+    }
+  }
+
+  return grupos;
+}
+
+/**
+ * Bloqueia um grupo de duplicatas em marcacoes_bloqueadas
+ */
+async function bloquearGrupoDuplicatas(empresaId, grupo, grupoId, motivo) {
+  let bloqueadas = 0;
+  for (const item of grupo) {
+    try {
+      await query(
+        `INSERT INTO marcacoes_bloqueadas
+           (empresa_id, funcionario_id, data_hora, tipo, mobile_ref_id, grupo_id, motivo_bloqueio)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          empresaId,
+          Number(item.funcionario_id),
+          item.marcacao_at,
+          item.origem === 'REP' ? 'rep' : 'online',
+          Number(item.id),
+          grupoId,
+          motivo,
+        ],
+      );
+      bloqueadas++;
+    } catch (err) {
+      console.error(`[bloquearGrupoDuplicatas] Erro ao bloquear item ${item.id}:`, err.message);
+    }
+  }
+  return bloqueadas;
+}
+
 // ── Importar Marcações ───────────────────────────────────────────────────────
 
 export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = null, funcionarioId = null) {
@@ -367,13 +448,39 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
     for (const d of diasBloq) bloqueados.add(`${d.funcionario_id}-${d.data}`);
   }
 
+  // Detecta grupos de duplicatas antes de processar
+  const gruposDuplicatas = detectarGruposDuplicatas(items, funcMap);
+  const itensEmGrupo = new Set();
+  for (const grupo of gruposDuplicatas.values()) {
+    for (const item of grupo) {
+      itensEmGrupo.add(Number(item.id));
+    }
+  }
+
   let importados = 0;
   let ignorados = 0;
   let bloqueados_count = 0;
+  let duplicatas_bloqueadas = 0;
   const erros = [];
+
+  // Bloqueia todos os grupos de duplicatas
+  for (const [grupoId, grupo] of gruposDuplicatas) {
+    const horariosStr = grupo
+      .map((i) => {
+        const d = new Date(i.marcacao_at);
+        return d.toTimeString().substring(0, 8);
+      })
+      .join(', ');
+    const motivo = `Grupo de duplicatas: ${horariosStr}`;
+    const nBloqueadas = await bloquearGrupoDuplicatas(fil.empresa_id, grupo, grupoId, motivo);
+    duplicatas_bloqueadas += nBloqueadas;
+  }
 
   for (const item of items) {
     try {
+      // Ignora items que foram bloqueados como parte de um grupo
+      if (itensEmGrupo.has(Number(item.id))) continue;
+
       const mobileRefId = Number(item.id);
       const mobileFuncId = Number(item.funcionario_id);
       const funcEntry = funcMap.get(mobileFuncId);
@@ -427,7 +534,53 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
     console.error(`[pullMarcacoes] ${erros.length} erro(s). Primeiro:`, erros[0]);
   }
 
-  return { importados, ignorados, bloqueados: bloqueados_count, erros };
+  return { importados, ignorados, bloqueados: bloqueados_count, duplicatas_bloqueadas, erros };
+}
+
+// ── Gestão de batidas bloqueadas ──────────────────────────────────────────────
+
+export async function listarBloqueadas(empresaId, funcionarioId = null) {
+  let sql = `
+    SELECT
+      b.id, b.funcionario_id, b.data_hora, b.tipo, b.mobile_ref_id,
+      b.grupo_id, b.motivo_bloqueio, b.desbloqueado_por, b.desbloqueado_em,
+      f.nome AS funcionario_nome
+    FROM marcacoes_bloqueadas b
+    JOIN funcionarios f ON f.id = b.funcionario_id
+    WHERE b.empresa_id = ? AND b.desbloqueado_em IS NULL
+  `;
+  const params = [empresaId];
+
+  if (funcionarioId) {
+    sql += ' AND b.funcionario_id = ?';
+    params.push(funcionarioId);
+  }
+
+  sql += ' ORDER BY b.grupo_id DESC, b.data_hora ASC';
+  return query(sql, params);
+}
+
+export async function desbloquearBloqueada(id, usuarioId) {
+  const [bloqueada] = await query(
+    'SELECT * FROM marcacoes_bloqueadas WHERE id = ?',
+    [id],
+  );
+  if (!bloqueada) throw new Error('Batida bloqueada não encontrada');
+
+  // Move para marcacoes
+  await query(
+    `INSERT INTO marcacoes (funcionario_id, data_hora, tipo, motivo_edicao, original, mobile_ref_id)
+     VALUES (?, ?, ?, ?, 0, ?)`,
+    [bloqueada.funcionario_id, bloqueada.data_hora, bloqueada.tipo, null, bloqueada.mobile_ref_id],
+  );
+
+  // Marca como desbloqueada
+  await query(
+    'UPDATE marcacoes_bloqueadas SET desbloqueado_por = ?, desbloqueado_em = NOW() WHERE id = ?',
+    [usuarioId, id],
+  );
+
+  return { bloqueada, movida: true };
 }
 
 // ── Status da configuração ───────────────────────────────────────────────────

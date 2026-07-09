@@ -366,6 +366,7 @@ export default async function cadastrosRoutes(fastify) {
           atribuir_100pct_terceiro_domingo: { type: 'integer', minimum: 0, maximum: 1 },
           lancar_debitos_domingo_50pct: { type: 'integer', minimum: 0, maximum: 1 },
           tabela_zerada_e_folga: { type: 'integer', minimum: 0, maximum: 1 },
+          calcula_pares_sequenciais_noturno: { type: 'integer', minimum: 0, maximum: 1 },
           hora_inicio_100pct:           { anyOf: [{ type: 'null' }, { type: 'string', pattern: '^\\d{2}:\\d{2}$' }] },
           hora_inicio_adicional_noturno: { anyOf: [{ type: 'null' }, { type: 'string', pattern: '^\\d{2}:\\d{2}$' }] },
         },
@@ -382,8 +383,9 @@ export default async function cadastrosRoutes(fastify) {
         dividir_extras_50_100, calcular_60pct_sabados, sabado_somente_extras,
         juntar_100pct_sabado_normal, atribuir_100pct_terceiro_domingo,
         lancar_debitos_domingo_50pct, tabela_zerada_e_folga,
+        calcula_pares_sequenciais_noturno,
         hora_inicio_100pct, hora_inicio_adicional_noturno)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         request.empresaId,
         d.nome,
@@ -404,6 +406,7 @@ export default async function cadastrosRoutes(fastify) {
         d.atribuir_100pct_terceiro_domingo ?? 0,
         d.lancar_debitos_domingo_50pct ?? 0,
         d.tabela_zerada_e_folga ?? 0,
+        d.calcula_pares_sequenciais_noturno ?? 0,
         d.hora_inicio_100pct ?? null,
         d.hora_inicio_adicional_noturno ?? '22:00',
       ]
@@ -423,6 +426,7 @@ export default async function cadastrosRoutes(fastify) {
       'dividir_extras_50_100', 'calcular_60pct_sabados', 'sabado_somente_extras',
       'juntar_100pct_sabado_normal', 'atribuir_100pct_terceiro_domingo',
       'lancar_debitos_domingo_50pct', 'tabela_zerada_e_folga',
+      'calcula_pares_sequenciais_noturno',
       'hora_inicio_100pct', 'hora_inicio_adicional_noturno', 'ativo',
     ];
     const fields = [];
