@@ -1,4 +1,4 @@
-n USE ponto_web;
+USE ponto_web;
 
 -- ─── TIPOS DE OCORRÊNCIA (cadastro por empresa) ──────────────────────────────
 CREATE TABLE IF NOT EXISTS tipos_ocorrencia (
