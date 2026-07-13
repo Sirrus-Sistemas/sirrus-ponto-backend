@@ -27,7 +27,14 @@ export const RelogioSyncRepository = {
   },
 
   // Para o sistema de coleta local
+  //
+  // LIMIT é interpolado direto na SQL, não parametrizado: o mysql2 falha
+  // com "Incorrect arguments to mysqld_stmt_execute" (ER_WRONG_ARGUMENTS)
+  // ao usar `LIMIT ?` via prepared statement (.execute()), independente
+  // do valor. Seguro aqui porque limit nunca vem de entrada do usuário —
+  // é sempre o default ou um inteiro passado internamente.
   async findPendingByRelogio(relogioId, limit = 200) {
+    const limiteSeguro = Number.isInteger(limit) ? limit : 200;
     return query(
       `SELECT f.id AS fila_id, f.funcionario_id, f.operacao, f.tentativas,
               func.nome, func.cpf, func.pis, func.ativo
@@ -35,8 +42,8 @@ export const RelogioSyncRepository = {
        JOIN funcionarios func ON func.id = f.funcionario_id
        WHERE f.relogio_id = ? AND f.status = 'pendente'
        ORDER BY f.criado_em
-       LIMIT ?`,
-      [relogioId, limit],
+       LIMIT ${limiteSeguro}`,
+      [relogioId],
     );
   },
 
