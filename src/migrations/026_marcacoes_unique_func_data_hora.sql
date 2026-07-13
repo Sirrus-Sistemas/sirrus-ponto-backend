@@ -10,12 +10,12 @@
 USE ponto_web;
 
 -- Remove duplicatas mantendo apenas o registro com menor id por (funcionario_id, data_hora)
---DELETE m1
---FROM marcacoes m1
---INNER JOIN marcacoes m2
---  ON  m2.funcionario_id = m1.funcionario_id
---  AND m2.data_hora      = m1.data_hora
---  AND m2.id             < m1.id;
+DELETE m1
+FROM marcacoes m1
+INNER JOIN marcacoes m2
+  ON  m2.funcionario_id = m1.funcionario_id
+  AND m2.data_hora      = m1.data_hora
+  AND m2.id             < m1.id;
 
 ALTER TABLE marcacoes
   ADD UNIQUE INDEX uq_marcacao_func_data_hora (funcionario_id, data_hora);
