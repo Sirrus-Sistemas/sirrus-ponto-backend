@@ -186,23 +186,20 @@ export default async function marcacaoRoutes(fastify) {
     // Accept ISO or "YYYY-MM-DD HH:MM" and normalise to MySQL DATETIME
     const normalized = data_hora.replace('T', ' ').replace('Z', '').slice(0, 19);
 
-    // Rejeita se já existe batida do mesmo funcionário no mesmo minuto (HH:MM)
-    // Extrai HH:MM do data_hora normalizado (formato: "2026-06-17 05:01:00")
-    const horaMinutoNormalizado = normalized.slice(11, 16); // "05:01"
-
+    // Rejeita se já existe batida do mesmo funcionário dentro de 1 minuto da data/hora informada
     const [proxima] = await query(
-      `SELECT id, data_hora FROM marcacoes
+      `SELECT id, DATE_FORMAT(data_hora, '%H:%i') AS hora_minuto
+         FROM marcacoes
         WHERE funcionario_id = ?
-          AND DATE_FORMAT(data_hora, '%H:%i') = ?
+          AND ABS(TIMESTAMPDIFF(SECOND, data_hora, ?)) < 60
         LIMIT 1`,
-      [funcionario_id, horaMinutoNormalizado],
+      [funcionario_id, normalized],
     );
 
     if (proxima) {
-      const horaExistente = String(proxima.data_hora).slice(11, 16);
       return reply.code(409).send({
         error: 'Duplicata',
-        message: `Já existe uma marcação às ${horaExistente} para este funcionário no mesmo minuto.`,
+        message: `Já existe uma marcação às ${proxima.hora_minuto} para este funcionário no mesmo minuto.`,
       });
     }
 

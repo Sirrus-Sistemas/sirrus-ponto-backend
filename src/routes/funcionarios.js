@@ -1,10 +1,12 @@
 import { authenticate, authorize, empresaScope } from '../middlewares/auth.js';
+import { query } from '../config/database.js';
 import { FuncionarioRepository } from '../repositories/funcionarioRepository.js';
 import { UsuarioRepository } from '../repositories/usuarioRepository.js';
 import { AuthService } from '../services/authService.js';
 import { onlyCpfDigits } from '../utils/cpf.js';
 import { parsePagination, paginatedResponse, successResponse } from '../utils/helpers.js';
 import { auditar } from '../services/auditService.js';
+import { RelogioSyncRepository } from '../repositories/relogioSyncRepository.js';
 
 const createSchema = {
   body: {
@@ -136,8 +138,25 @@ export default async function funcionarioRoutes(fastify) {
     }
     data.cpf = cpfDigits;
 
+    const [limiteRow] = await query(
+      `SELECT e.max_funcionarios, COUNT(f.id) AS total_ativos
+       FROM empresas e
+       LEFT JOIN funcionarios f ON f.empresa_id = e.id AND f.ativo = 1
+       WHERE e.id = ?
+       GROUP BY e.id`,
+      [request.empresaId],
+    );
+    if (limiteRow && limiteRow.total_ativos >= limiteRow.max_funcionarios) {
+      return reply.code(422).send({
+        message: `Limite de ${limiteRow.max_funcionarios} funcionário(s) ativo(s) atingido. Entre em contato com o suporte Sirrus para ampliar seu plano.`,
+        code: 'LIMITE_FUNCIONARIOS',
+      });
+    }
+
     const id = await FuncionarioRepository.create(data);
     await UsuarioRepository.insertForFuncionario(id, cpfDigits, data.senha_hash);
+
+    RelogioSyncRepository.enqueueForAllRelogios(data.empresa_id, id, 'inserir').catch(() => {});
 
     const func = await FuncionarioRepository.findById(id);
     delete func.senha_hash;
@@ -176,6 +195,8 @@ export default async function funcionarioRoutes(fastify) {
         await UsuarioRepository.updateCpf(request.params.id, d);
       }
     }
+
+    RelogioSyncRepository.enqueueForAllRelogios(request.empresaId, Number(request.params.id), 'atualizar').catch(() => {});
 
     const updated = await FuncionarioRepository.findById(request.params.id);
     delete updated.senha_hash;

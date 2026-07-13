@@ -52,6 +52,37 @@ export const FuncionarioRepository = {
   },
 
   /**
+   * Resolve um funcionário desta empresa por CPF ou PIS (o primeiro que
+   * vier preenchido tem prioridade) — usado para importar marcações de um
+   * relógio físico, que identifica o funcionário por um desses dois
+   * campos dependendo do modelo do equipamento.
+   */
+  async findByCpfOuPis(empresaId, { cpf, pis }) {
+    if (cpf) {
+      const digits = cpf.replace(/\D/g, '');
+      const rows = await query(
+        `SELECT id FROM funcionarios
+          WHERE empresa_id = ?
+            AND REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(cpf, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+          LIMIT 1`,
+        [empresaId, digits],
+      );
+      if (rows[0]) return rows[0].id;
+    }
+
+    if (pis) {
+      const digits = pis.replace(/\D/g, '');
+      const rows = await query(
+        'SELECT id FROM funcionarios WHERE empresa_id = ? AND pis = ? LIMIT 1',
+        [empresaId, digits],
+      );
+      if (rows[0]) return rows[0].id;
+    }
+
+    return null;
+  },
+
+  /**
    * Turno + carga horária diária (para espelho / previsto).
    */
   async findTurnoJornada(funcionarioId) {

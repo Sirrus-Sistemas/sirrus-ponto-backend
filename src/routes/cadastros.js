@@ -91,6 +91,22 @@ export default async function cadastrosRoutes(fastify) {
     },
   }, async (request, reply) => {
     const { nome, tipo_documento, cnpj, endereco, bairro, cidade, uf, cep, telefone, email, num_registradora } = request.body;
+
+    const [limiteRow] = await query(
+      `SELECT e.max_filiais, COUNT(f.id) AS total_ativas
+       FROM empresas e
+       LEFT JOIN filiais f ON f.empresa_id = e.id AND f.ativa = 1
+       WHERE e.id = ?
+       GROUP BY e.id`,
+      [request.empresaId],
+    );
+    if (limiteRow && limiteRow.total_ativas >= limiteRow.max_filiais) {
+      return reply.code(422).send({
+        message: `Limite de ${limiteRow.max_filiais} filial(is) atingido. Entre em contato com o suporte Sirrus para ampliar seu plano.`,
+        code: 'LIMITE_FILIAIS',
+      });
+    }
+
     const result = await query(
       `INSERT INTO filiais (empresa_id, nome, tipo_documento, cnpj, endereco, bairro, cidade, uf, cep, telefone, email, num_registradora)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

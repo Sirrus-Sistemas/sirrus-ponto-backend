@@ -4,7 +4,7 @@ export const EmpresaRepository = {
   async findById(id) {
     const rows = await query(
       `SELECT e.id, e.razao_social, e.nome_fantasia, e.cnpj, e.endereco, e.cidade, e.uf,
-              e.municipio_id,
+              e.municipio_id, e.max_filiais, e.max_funcionarios,
               m.NOMEMUNICIPIO AS municipio_nome,
               m.ESTADO        AS municipio_estado,
               m.fuso_horario  AS municipio_fuso_horario

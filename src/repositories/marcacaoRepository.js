@@ -75,6 +75,36 @@ export const MarcacaoRepository = {
     await query('DELETE FROM marcacoes WHERE id = ?', [id]);
   },
 
+  /**
+   * Importa uma marcação coletada de um relógio físico (sistema de coleta
+   * local). A dedup de verdade vem da UNIQUE (funcionario_id, data_hora)
+   * da migration 026 — reenviar a mesma marcação não gera duplicata, só
+   * affectedRows = 0. dataHora chega no horário local do relógio (Brasil,
+   * UTC-3 fixo, sem horário de verão) e é convertida para UTC aqui, a
+   * mesma convenção usada pelo resto desta tabela.
+   */
+  async insertFromRelogio({ funcionarioId, relogioId, nsr, dataHora }) {
+    const result = await query(
+      `INSERT IGNORE INTO marcacoes (funcionario_id, relogio_id, nsr, data_hora, tipo, original)
+       VALUES (?, ?, ?, CONVERT_TZ(?, '-03:00', '+00:00'), 'rep', 1)`,
+      [funcionarioId, relogioId, nsr, dataHora],
+    );
+    return result.affectedRows > 0;
+  },
+
+  /**
+   * Maior NSR já importado deste relógio — usado pelo sistema de coleta
+   * local para saber a partir de onde pedir marcações ao equipamento
+   * (evita baixar de novo o histórico inteiro a cada ciclo).
+   */
+  async ultimoNsrPorRelogio(relogioId) {
+    const rows = await query(
+      'SELECT MAX(nsr) AS ultimo_nsr FROM marcacoes WHERE relogio_id = ?',
+      [relogioId],
+    );
+    return rows[0]?.ultimo_nsr ?? 0;
+  },
+
   async findByFuncionarioMonth(funcionarioId, year, month, tzOffset = TZ_OFFSET_DEFAULT) {
     // DATE_SUB 5h shifts the window so 00:00–04:59 local belongs to the previous shift day.
     // dia_referencia overrides this automatic grouping for overnight punches beyond 05:00.
