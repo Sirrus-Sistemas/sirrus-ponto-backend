@@ -2,7 +2,7 @@ import { authenticate, authorize, empresaScope } from '../middlewares/auth.js';
 import { successResponse } from '../utils/helpers.js';
 import { RelogioRepository } from '../repositories/relogioRepository.js';
 import { RelogioSyncRepository } from '../repositories/relogioSyncRepository.js';
-import { MarcacaoRepository } from '../repositories/marcacaoRepository.js';
+import { RelogioMarcacaoRepository } from '../repositories/relogioMarcacaoRepository.js';
 import { FuncionarioRepository } from '../repositories/funcionarioRepository.js';
 
 const MODELOS_VALIDOS = [
@@ -64,7 +64,7 @@ export default async function relogiosRoutes(fastify) {
     schema: {
       body: {
         type: 'object',
-        required: ['numero_serie', 'descricao', 'modelo'],
+        required: ['numero_serie', 'descricao', 'modelo', 'sincronizar_desde'],
         properties: {
           numero_serie: { type: 'string', minLength: 1, maxLength: 100 },
           descricao:    { type: 'string', minLength: 1, maxLength: 200 },
@@ -75,6 +75,10 @@ export default async function relogiosRoutes(fastify) {
           senha:        { type: 'string', nullable: true },
           usa_afd:      { type: 'boolean', default: false },
           filial_id:    { type: 'integer', nullable: true },
+          // Marcações anteriores a esta data são descartadas pelo sistema
+          // de coleta local — obrigatório para relógios antigos não
+          // importarem anos de histórico de ex-funcionários de uma vez.
+          sincronizar_desde: { type: 'string', format: 'date' },
         },
         additionalProperties: false,
       },
@@ -159,11 +163,16 @@ export default async function relogiosRoutes(fastify) {
     const relogio = await RelogioRepository.findById(relogioId, request.empresaId);
     if (!relogio) return reply.code(404).send({ message: 'Relógio não encontrado.' });
 
-    const ultimoNsr = await MarcacaoRepository.ultimoNsrPorRelogio(relogioId);
+    const ultimoNsr = await RelogioMarcacaoRepository.ultimoNsrPorRelogio(relogioId);
     return successResponse({ ultimo_nsr: ultimoNsr });
   });
 
   // ── POST /api/relogios/marcacoes  (sistema de coleta local)
+  //
+  // Toda marcação é registrada em relogio_marcacoes_importadas, vinculada
+  // ou não a um funcionário — nada é descartado. Sem isso, uma marcação
+  // sem funcionário correspondente ainda seria perdida para sempre assim
+  // que o NSR avançasse por cima dela.
   fastify.post('/relogios/marcacoes', {
     preHandler: [authorize('admin')],
     schema: marcacoesImportarSchema,
@@ -175,27 +184,47 @@ export default async function relogiosRoutes(fastify) {
 
     const resultados = [];
     for (const m of marcacoes) {
-      if (!m.cpf && !m.pis) {
-        resultados.push({ nsr: m.nsr, status: 'funcionario_nao_encontrado' });
-        continue;
-      }
+      const funcionarioId = (m.cpf || m.pis)
+        ? await FuncionarioRepository.findByCpfOuPis(request.empresaId, { cpf: m.cpf, pis: m.pis })
+        : null;
 
-      const funcionarioId = await FuncionarioRepository.findByCpfOuPis(request.empresaId, { cpf: m.cpf, pis: m.pis });
-      if (!funcionarioId) {
-        resultados.push({ nsr: m.nsr, status: 'funcionario_nao_encontrado' });
-        continue;
-      }
-
-      const inserida = await MarcacaoRepository.insertFromRelogio({
-        funcionarioId,
+      const status = await RelogioMarcacaoRepository.importar({
         relogioId: relogio_id,
         nsr: m.nsr,
+        cpf: m.cpf ?? null,
+        pis: m.pis ?? null,
         dataHora: m.data_hora,
+        funcionarioId,
       });
-      resultados.push({ nsr: m.nsr, status: inserida ? 'inserida' : 'duplicada' });
+      resultados.push({ nsr: m.nsr, status });
     }
 
     return reply.code(201).send(successResponse(resultados, 'Marcações processadas.'));
+  });
+
+  // ── GET /api/relogios/marcacoes/pendentes?relogio_id=X&search=  (tela de reconciliação)
+  fastify.get('/relogios/marcacoes/pendentes', { preHandler: [authorize('admin')] }, async (request) => {
+    const relogioId = request.query.relogio_id ? Number(request.query.relogio_id) : undefined;
+    const pendentes = await RelogioMarcacaoRepository.listarPendentes(request.empresaId, {
+      relogioId,
+      search: request.query.search || undefined,
+    });
+    return successResponse(pendentes);
+  });
+
+  // ── POST /api/relogios/marcacoes/:id/vincular  (tela de reconciliação)
+  fastify.post('/relogios/marcacoes/:id/vincular', { preHandler: [authorize('admin')] }, async (request, reply) => {
+    const { funcionario_id } = request.body ?? {};
+    if (!funcionario_id) return reply.code(400).send({ message: 'Informe funcionario_id.' });
+
+    const funcionario = await FuncionarioRepository.findById(Number(funcionario_id));
+    if (!funcionario || funcionario.empresa_id !== request.empresaId) {
+      return reply.code(404).send({ message: 'Funcionário não encontrado.' });
+    }
+
+    const vinculada = await RelogioMarcacaoRepository.vincular(Number(request.params.id), Number(funcionario_id));
+    if (!vinculada) return reply.code(404).send({ message: 'Marcação pendente não encontrada.' });
+    return successResponse(null, 'Marcação vinculada com sucesso.');
   });
 
   // ══════════════════════════════════════════════════════════════════

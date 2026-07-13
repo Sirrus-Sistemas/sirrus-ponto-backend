@@ -21,6 +21,9 @@ const app = Fastify({
   logger: {
     level: process.env.NODE_ENV === 'development' ? 'info' : 'warn',
   },
+  // Default (1MB) é curto demais para POST /relogios/marcacoes na primeira
+  // sincronização de um relógio (pode importar anos de histórico de uma vez).
+  bodyLimit: 10 * 1024 * 1024,
 });
 
 // ─── PLUGINS ──────────────────────────────────────────────────────────────

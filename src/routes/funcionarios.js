@@ -7,6 +7,7 @@ import { onlyCpfDigits } from '../utils/cpf.js';
 import { parsePagination, paginatedResponse, successResponse } from '../utils/helpers.js';
 import { auditar } from '../services/auditService.js';
 import { RelogioSyncRepository } from '../repositories/relogioSyncRepository.js';
+import { RelogioMarcacaoRepository } from '../repositories/relogioMarcacaoRepository.js';
 
 const createSchema = {
   body: {
@@ -157,6 +158,11 @@ export default async function funcionarioRoutes(fastify) {
     await UsuarioRepository.insertForFuncionario(id, cpfDigits, data.senha_hash);
 
     RelogioSyncRepository.enqueueForAllRelogios(data.empresa_id, id, 'inserir').catch(() => {});
+
+    // Reconcilia marcações que já tinham chegado do relógio antes deste
+    // funcionário existir no sistema (relógio antigo com histórico prévio,
+    // ou o cadastro aqui só aconteceu depois da primeira sincronização).
+    RelogioMarcacaoRepository.vincularPendentes(data.empresa_id, id, { cpf: cpfDigits, pis: data.pis ?? null }).catch(() => {});
 
     const func = await FuncionarioRepository.findById(id);
     delete func.senha_hash;

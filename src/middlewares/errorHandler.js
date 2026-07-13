@@ -10,8 +10,11 @@ export function errorHandler(error, request, reply) {
     });
   }
 
-  // Erros do MySQL/MariaDB
-  if (error.code) {
+  // Erros do MySQL/MariaDB — sqlState só existe em erros vindos do driver
+  // (mysql2); erros nativos do Fastify (ex.: corpo grande demais, rotas
+  // não encontradas) também têm `.code`, mas nunca `.sqlState`, e não
+  // devem cair aqui como se fossem falha de banco.
+  if (error.code && error.sqlState) {
     switch (error.code) {
       case 'ER_DUP_ENTRY':
         return reply.code(409).send({

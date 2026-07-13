@@ -76,12 +76,15 @@ export const MarcacaoRepository = {
   },
 
   /**
-   * Importa uma marcação coletada de um relógio físico (sistema de coleta
+   * Importa uma marcação já vinculada a um funcionário (sistema de coleta
    * local). A dedup de verdade vem da UNIQUE (funcionario_id, data_hora)
    * da migration 026 — reenviar a mesma marcação não gera duplicata, só
    * affectedRows = 0. dataHora chega no horário local do relógio (Brasil,
    * UTC-3 fixo, sem horário de verão) e é convertida para UTC aqui, a
    * mesma convenção usada pelo resto desta tabela.
+   *
+   * Devolve o id da marcação (nova ou já existente) para quem chama poder
+   * vincular a linha correspondente em relogio_marcacoes_importadas.
    */
   async insertFromRelogio({ funcionarioId, relogioId, nsr, dataHora }) {
     const result = await query(
@@ -89,20 +92,15 @@ export const MarcacaoRepository = {
        VALUES (?, ?, ?, CONVERT_TZ(?, '-03:00', '+00:00'), 'rep', 1)`,
       [funcionarioId, relogioId, nsr, dataHora],
     );
-    return result.affectedRows > 0;
-  },
+    if (result.affectedRows > 0) {
+      return { inserida: true, marcacaoId: result.insertId };
+    }
 
-  /**
-   * Maior NSR já importado deste relógio — usado pelo sistema de coleta
-   * local para saber a partir de onde pedir marcações ao equipamento
-   * (evita baixar de novo o histórico inteiro a cada ciclo).
-   */
-  async ultimoNsrPorRelogio(relogioId) {
-    const rows = await query(
-      'SELECT MAX(nsr) AS ultimo_nsr FROM marcacoes WHERE relogio_id = ?',
-      [relogioId],
+    const [row] = await query(
+      `SELECT id FROM marcacoes WHERE funcionario_id = ? AND data_hora = CONVERT_TZ(?, '-03:00', '+00:00') LIMIT 1`,
+      [funcionarioId, dataHora],
     );
-    return rows[0]?.ultimo_nsr ?? 0;
+    return { inserida: false, marcacaoId: row?.id ?? null };
   },
 
   async findByFuncionarioMonth(funcionarioId, year, month, tzOffset = TZ_OFFSET_DEFAULT) {

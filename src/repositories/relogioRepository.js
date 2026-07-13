@@ -26,8 +26,8 @@ export const RelogioRepository = {
   async create(empresaId, data) {
     const result = await query(
       `INSERT INTO relogios_ponto
-         (empresa_id, filial_id, numero_serie, descricao, modelo, ip, porta, usuario, senha, usa_afd)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (empresa_id, filial_id, numero_serie, descricao, modelo, ip, porta, usuario, senha, usa_afd, sincronizar_desde)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         empresaId,
         data.filial_id ?? null,
@@ -39,13 +39,14 @@ export const RelogioRepository = {
         data.usuario || null,
         data.senha   || null,
         data.usa_afd ? 1 : 0,
+        data.sincronizar_desde,
       ],
     );
     return result.insertId;
   },
 
   async update(id, empresaId, data) {
-    const allowed = ['filial_id', 'numero_serie', 'descricao', 'modelo', 'ip', 'porta', 'usuario', 'senha', 'usa_afd', 'ativo'];
+    const allowed = ['filial_id', 'numero_serie', 'descricao', 'modelo', 'ip', 'porta', 'usuario', 'senha', 'usa_afd', 'ativo', 'sincronizar_desde'];
     const boolFields = new Set(['usa_afd', 'ativo']);
     const nullableStr = new Set(['ip', 'usuario', 'senha', 'filial_id', 'porta']);
     const fields = [];
@@ -89,6 +90,7 @@ export const RelogioRepository = {
     return query(
       `SELECT r.id, r.numero_serie, r.descricao, r.modelo,
               r.ip, r.porta, r.usuario, r.senha, r.usa_afd, r.filial_id,
+              r.sincronizar_desde,
               f.nome AS filial_nome
        FROM relogios_ponto r
        LEFT JOIN filiais f ON f.id = r.filial_id
