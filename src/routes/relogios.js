@@ -4,6 +4,7 @@ import { RelogioRepository } from '../repositories/relogioRepository.js';
 import { RelogioSyncRepository } from '../repositories/relogioSyncRepository.js';
 import { RelogioMarcacaoRepository } from '../repositories/relogioMarcacaoRepository.js';
 import { FuncionarioRepository } from '../repositories/funcionarioRepository.js';
+import { parseAfd, chaveParaModelo } from '../utils/afdParser.js';
 
 const MODELOS_VALIDOS = [
   'arquivo_afd', 'control_id', 'control_id_class', 'control_id_class_671',
@@ -225,6 +226,44 @@ export default async function relogiosRoutes(fastify) {
     const vinculada = await RelogioMarcacaoRepository.vincular(Number(request.params.id), Number(funcionario_id));
     if (!vinculada) return reply.code(404).send({ message: 'Marcação pendente não encontrada.' });
     return successResponse(null, 'Marcação vinculada com sucesso.');
+  });
+
+  // ── POST /api/relogios/marcacoes/importar-afd  (upload manual, relógio sem rede)
+  //
+  // Alternativa ao sistema de coleta local (TCP/IP) para equipamentos sem
+  // rede — o operador baixa o AFD no relógio via pen drive e sobe aqui.
+  // Reaproveita o mesmo pipeline de importação/reconciliação (nada é
+  // descartado: marcação sem funcionário correspondente fica pendente).
+  fastify.post('/relogios/marcacoes/importar-afd', { preHandler: [authorize('admin')] }, async (request, reply) => {
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ message: 'Envie o arquivo AFD.' });
+
+    const relogioId = Number(file.fields?.relogio_id?.value);
+    if (!relogioId) return reply.code(400).send({ message: 'Informe relogio_id.' });
+
+    const relogio = await RelogioRepository.findById(relogioId, request.empresaId);
+    if (!relogio) return reply.code(404).send({ message: 'Relógio não encontrado.' });
+
+    const buffer = await file.toBuffer();
+    const conteudo = buffer.toString('utf-8');
+    const chave = chaveParaModelo(relogio.modelo);
+    const marcacoes = parseAfd(conteudo, chave);
+
+    const resumo = { total_linhas: marcacoes.length, inserida: 0, duplicada: 0, pendente: 0 };
+    for (const m of marcacoes) {
+      const funcionarioId = await FuncionarioRepository.findByCpfOuPis(request.empresaId, { cpf: m.cpf, pis: m.pis });
+      const status = await RelogioMarcacaoRepository.importar({
+        relogioId,
+        nsr: m.nsr,
+        cpf: m.cpf ?? null,
+        pis: m.pis ?? null,
+        dataHora: m.dataHora,
+        funcionarioId,
+      });
+      resumo[status] = (resumo[status] ?? 0) + 1;
+    }
+
+    return reply.code(201).send(successResponse(resumo, 'Arquivo AFD importado.'));
   });
 
   // ══════════════════════════════════════════════════════════════════

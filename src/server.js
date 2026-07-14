@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
+import multipart from '@fastify/multipart';
 
 import { testConnection, closePool } from './config/database.js';
 import { errorHandler } from './middlewares/errorHandler.js';
@@ -41,6 +42,12 @@ await app.register(rateLimit, {
   max: 500,
   timeWindow: '1 minute',
   keyGenerator: (request) => request.user?.id ?? request.ip,
+});
+
+// Upload manual de arquivo AFD (relógios sem rede, ex.: pen drive) — arquivos
+// de um equipamento com histórico de anos podem passar de 1MB.
+await app.register(multipart, {
+  limits: { fileSize: 20 * 1024 * 1024 },
 });
 
 // ─── ERROR HANDLER ────────────────────────────────────────────────────────
