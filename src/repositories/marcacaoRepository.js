@@ -79,9 +79,9 @@ export const MarcacaoRepository = {
    * Importa uma marcação já vinculada a um funcionário (sistema de coleta
    * local). A dedup de verdade vem da UNIQUE (funcionario_id, data_hora)
    * da migration 026 — reenviar a mesma marcação não gera duplicata, só
-   * affectedRows = 0. dataHora chega no horário local do relógio (Brasil,
-   * UTC-3 fixo, sem horário de verão) e é convertida para UTC aqui, a
-   * mesma convenção usada pelo resto desta tabela.
+   * affectedRows = 0. dataHora chega no horário LOCAL do relógio e é
+   * armazenado como está (sem conversão para UTC). O espelho usa
+   * data_hora diretamente para tipo='rep', sem CONVERT_TZ.
    *
    * Devolve o id da marcação (nova ou já existente) para quem chama poder
    * vincular a linha correspondente em relogio_marcacoes_importadas.
@@ -89,7 +89,7 @@ export const MarcacaoRepository = {
   async insertFromRelogio({ funcionarioId, relogioId, nsr, dataHora }) {
     const result = await query(
       `INSERT IGNORE INTO marcacoes (funcionario_id, relogio_id, nsr, data_hora, tipo, original)
-       VALUES (?, ?, ?, CONVERT_TZ(?, '-03:00', '+00:00'), 'rep', 1)`,
+       VALUES (?, ?, ?, ?, 'rep', 1)`,
       [funcionarioId, relogioId, nsr, dataHora],
     );
     if (result.affectedRows > 0) {
@@ -97,7 +97,7 @@ export const MarcacaoRepository = {
     }
 
     const [row] = await query(
-      `SELECT id FROM marcacoes WHERE funcionario_id = ? AND data_hora = CONVERT_TZ(?, '-03:00', '+00:00') LIMIT 1`,
+      `SELECT id FROM marcacoes WHERE funcionario_id = ? AND data_hora = ? LIMIT 1`,
       [funcionarioId, dataHora],
     );
     return { inserida: false, marcacaoId: row?.id ?? null };
@@ -106,24 +106,41 @@ export const MarcacaoRepository = {
   async findByFuncionarioMonth(funcionarioId, year, month, tzOffset = TZ_OFFSET_DEFAULT) {
     // DATE_SUB 5h shifts the window so 00:00–04:59 local belongs to the previous shift day.
     // dia_referencia overrides this automatic grouping for overnight punches beyond 05:00.
+    // Batidas REP são armazenadas no horário LOCAL do relógio (sem conversão UTC).
+    // Para elas, data_hora_local = data_hora direto. Para os demais tipos (online,
+    // geo, manual) o valor é UTC e precisa de CONVERT_TZ para o fuso da empresa.
     return query(
       `SELECT id,
               data_hora,
               dia_referencia,
-              DATE_FORMAT(CONVERT_TZ(data_hora, '+00:00', ?), '%Y-%m-%dT%H:%i:%s') AS data_hora_local,
+              DATE_FORMAT(
+                CASE WHEN tipo = 'rep' THEN data_hora
+                     ELSE CONVERT_TZ(data_hora, '+00:00', ?)
+                END,
+                '%Y-%m-%dT%H:%i:%s'
+              ) AS data_hora_local,
               tipo,
               motivo_edicao,
               original,
               slot_override,
               COALESCE(
                 DATE_FORMAT(dia_referencia, '%Y-%m-%d'),
-                DATE_FORMAT(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?), '%Y-%m-%d')
+                DATE_FORMAT(
+                  CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL 5 HOUR)
+                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)
+                  END,
+                  '%Y-%m-%d'
+                )
               ) AS dia
          FROM marcacoes
         WHERE funcionario_id = ?
           AND (
-            (YEAR(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?))  = ?
-             AND MONTH(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)) = ?)
+            (YEAR(CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL 5 HOUR)
+                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)
+                  END) = ?
+             AND MONTH(CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL 5 HOUR)
+                            ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)
+                       END) = ?)
             OR (dia_referencia IS NOT NULL AND YEAR(dia_referencia) = ? AND MONTH(dia_referencia) = ?)
           )
         ORDER BY data_hora ASC`,
