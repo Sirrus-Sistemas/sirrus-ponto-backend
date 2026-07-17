@@ -106,20 +106,18 @@ function eachCalendarDay(year, month) {
   return days;
 }
 
-function minutosTrabalhadosPar(punches, calcularParesSemData = false) {
+function minutosTrabalhadosPar(punches, dataStr, tzOffsetMs, calcularParesSemData = false) {
   if (!punches.length) return { minutos: 0, incompleto: false };
 
   if (calcularParesSemData) {
-    // Para turnos noturnos: soma pares sequenciais sem reordenar por data_hora
-    // Útil quando o turno cruza meia-noite e batidas estão em dias diferentes
+    // Para turnos noturnos: usa o horário do relógio de cada batida (não a data real),
+    // pois dia_referencia pode juntar num mesmo dia de relatório batidas cuja data_hora
+    // real cai em dias diferentes — subtrair os timestamps absolutos geraria durações
+    // de dezenas de horas entre batidas que no relógio estão a poucos minutos.
+    const times = virtualPunchTimestamps(punches, dataStr, tzOffsetMs);
     let minutos = 0;
-    const pares = [];
-    for (let i = 0; i + 1 < punches.length; i += 2) {
-      const entrada = new Date(punches[i].data_hora).getTime();
-      const saida = new Date(punches[i + 1].data_hora).getTime();
-      const minutosPar = Math.round((saida - entrada) / 60000);
-      pares.push({ entrada: punches[i].data_hora, saida: punches[i + 1].data_hora, minutos: minutosPar });
-      minutos += minutosPar;
+    for (let i = 0; i + 1 < times.length; i += 2) {
+      minutos += Math.round((times[i + 1] - times[i]) / 60000);
     }
     return { minutos, incompleto: punches.length % 2 === 1 };
   }
@@ -182,6 +180,32 @@ function batidasEsperadasDoDia(th) {
 const DAY_MS = 24 * 60 * 60000;
 const NOTURNO_FIM_MIN = 5 * 60; // 05:00 — fixed by CLT
 
+function localMidnightUtcMs(dataStr, tzOffsetMs) {
+  const [y, m, d] = dataStr.split('-').map(Number);
+  return Date.UTC(y, m - 1, d) - tzOffsetMs;
+}
+
+/**
+ * Converte as batidas de um dia em timestamps "virtuais": preserva o horário do
+ * relógio de cada uma e avança 24h sempre que a sequência retrocede no horário,
+ * em vez de usar a data_hora real. dia_referencia pode reatribuir uma batida a um
+ * dia de relatório diferente da sua data real (turno que cruza a meia-noite), e
+ * nesse caso a diferença entre timestamps absolutos não reflete a duração real
+ * do turno.
+ */
+function virtualPunchTimestamps(punches, dataStr, tzOffsetMs) {
+  const baseUtcMs = localMidnightUtcMs(dataStr, tzOffsetMs);
+  let prevTod = null;
+  let dayOffset = 0;
+  return punches.map((p) => {
+    const utcMs = new Date(p.data_hora).getTime();
+    const tod = (((utcMs + tzOffsetMs) % DAY_MS) + DAY_MS) % DAY_MS;
+    if (prevTod !== null && tod < prevTod) dayOffset += 1;
+    prevTod = tod;
+    return baseUtcMs + dayOffset * DAY_MS + tod;
+  });
+}
+
 /**
  * Converte string de offset ("-03:00", "UTC-05:00", "+00:00") para milissegundos.
  * Padrão: -03:00 (Brazil SE).
@@ -229,16 +253,15 @@ function minutosNocturnosIntervalo(startUtcMs, endUtcMs, noturnoInicioMin, tzOff
   return Math.round(total / 60000);
 }
 
-function minutosNocturnosPar(punches, noturnoInicioMin, tzOffsetMs, calcularParesSemData = false) {
+function minutosNocturnosPar(punches, noturnoInicioMin, tzOffsetMs, dataStr, calcularParesSemData = false) {
   if (!punches.length) return 0;
 
   if (calcularParesSemData) {
-    // Para turnos noturnos: soma pares sequenciais sem reordenar por data_hora
+    // Para turnos noturnos: usa o horário do relógio de cada batida (ver virtualPunchTimestamps)
+    const times = virtualPunchTimestamps(punches, dataStr, tzOffsetMs);
     let total = 0;
-    for (let i = 0; i + 1 < punches.length; i += 2) {
-      const inicio = new Date(punches[i].data_hora).getTime();
-      const fim = new Date(punches[i + 1].data_hora).getTime();
-      total += minutosNocturnosIntervalo(inicio, fim, noturnoInicioMin, tzOffsetMs);
+    for (let i = 0; i + 1 < times.length; i += 2) {
+      total += minutosNocturnosIntervalo(times[i], times[i + 1], noturnoInicioMin, tzOffsetMs);
     }
     return total;
   }
@@ -264,12 +287,12 @@ function minutosAposMeiaNoite(punches, shiftDateStr, tzOffsetMs, calcularParesSe
   const midnightMs = endOfShiftDayMs(shiftDateStr, tzOffsetMs);
 
   if (calcularParesSemData) {
-    // Para turnos noturnos: soma pares sequenciais sem reordenar por data_hora
+    // Para turnos noturnos: usa o horário do relógio de cada batida (ver virtualPunchTimestamps)
+    const times = virtualPunchTimestamps(punches, shiftDateStr, tzOffsetMs);
     let total = 0;
-    for (let i = 0; i + 1 < punches.length; i += 2) {
-      const start = new Date(punches[i].data_hora).getTime();
-      const end = new Date(punches[i + 1].data_hora).getTime();
-      if (end > midnightMs) total += end - Math.max(start, midnightMs);
+    for (let i = 0; i + 1 < times.length; i += 2) {
+      const end = times[i + 1];
+      if (end > midnightMs) total += end - Math.max(times[i], midnightMs);
     }
     return Math.round(total / 60000);
   }
@@ -469,7 +492,12 @@ export const EspelhoPontoService = {
 
       // Calcula minutos com base nas batidas deduplica das
       const calcularSemData = Number(lotacao?.calcula_pares_sequenciais_noturno) === 1;
-      const { minutos } = minutosTrabalhadosPar(rawDedup, calcularSemData);
+      // Para turno noturno com pares sequenciais: usa a ordem de exibição (slot_override) em vez
+      // da ordem cronológica real. Uma batida pode ter sido reatribuída a este dia via
+      // dia_referencia preservando sua posição lógica na sequência (ex.: 7º evento do turno),
+      // e não sua data_hora real — pareando pela data_hora real ela "salta" para o início.
+      const punchesParaCalculo = calcularSemData ? applySlotOverride(rawDedup) : rawDedup;
+      const { minutos } = minutosTrabalhadosPar(punchesParaCalculo, data, tzOffsetMs, calcularSemData);
       const intervaloAberto = rawDedup.length > 0 && rawDedup.length % 2 === 1;
       const dow = diaSemanaPt(data);
       const feriadoRaw = feriadosMap.get(data) || null;
@@ -622,7 +650,7 @@ export const EspelhoPontoService = {
       // dividir_extras_50_100: when a regular-day shift crosses midnight into a 100%-day
       // (Sunday or holiday), split at midnight — after-midnight hours = 100%, before = 50%.
       if (lotacao?.dividir_extras_50_100 && rawDedup.length >= 2) {
-        const minutosApos = minutosAposMeiaNoite(rawDedup, data, tzOffsetMs, calcularSemData);
+        const minutosApos = minutosAposMeiaNoite(punchesParaCalculo, data, tzOffsetMs, calcularSemData);
         if (minutosApos > 0) {
           const nextDay = nextDateStr(data);
           const nextDow = (dow + 1) % 7;
@@ -651,7 +679,7 @@ export const EspelhoPontoService = {
       totalExtras50pct  += extras_50pct_minutos;
 
       // Noturno: count minutes in [noturnoInicio, 05:00) local; applies on any day with punches
-      const minutos_noturno = rawDedup.length >= 2 ? minutosNocturnosPar(rawDedup, noturnoInicioMin, tzOffsetMs, calcularSemData) : 0;
+      const minutos_noturno = rawDedup.length >= 2 ? minutosNocturnosPar(punchesParaCalculo, noturnoInicioMin, tzOffsetMs, data, calcularSemData) : 0;
       totalMinutosNoturno += minutos_noturno;
 
       // Build expected punch times for justificativa automática
