@@ -2,6 +2,7 @@ import { authenticate, empresaScope } from '../middlewares/auth.js';
 import { MarcacaoRepository } from '../repositories/marcacaoRepository.js';
 import { FuncionarioRepository } from '../repositories/funcionarioRepository.js';
 import { EspelhoPontoService, fusoHorarioToTzOffset } from '../services/espelhoPontoService.js';
+import { JustificativaPeriodoService } from '../services/justificativaPeriodoService.js';
 import { EmpresaRepository } from '../repositories/empresaRepository.js';
 import { successResponse } from '../utils/helpers.js';
 import { toIsoDataHoraUtc } from '../utils/dataHoraIso.js';
@@ -219,7 +220,7 @@ export default async function marcacaoRoutes(fastify) {
       motivo_edicao: row.motivo_edicao,
       slot_override: row.slot_override ?? null,
     };
-    auditar({ acao: 'INSERT', tabela: 'marcacoes', registro_id: row.id, dados_anteriores: null, dados_novos: responseData, usuario_id: request.user.id, ip: request.ip });
+    auditar({ acao: 'INSERT', tabela: 'marcacoes', registro_id: row.id, dados_anteriores: null, dados_novos: responseData, usuario_id: request.user.id, empresa_id: request.empresaId, ip: request.ip });
     return reply.code(201).send(successResponse(responseData, 'Batida lançada'));
   });
 
@@ -266,7 +267,7 @@ export default async function marcacaoRoutes(fastify) {
       slotOverride: slot_override !== undefined ? slot_override : undefined,
       diaReferencia: dia_referencia !== undefined ? dia_referencia : undefined,
     });
-    auditar({ acao: 'UPDATE', tabela: 'marcacoes', registro_id: id, dados_anteriores: { data_hora: marcacao.data_hora }, dados_novos: { data_hora: normalized, motivo: justificativa || motivo || null, dia_referencia }, usuario_id: request.user.id, ip: request.ip });
+    auditar({ acao: 'UPDATE', tabela: 'marcacoes', registro_id: id, dados_anteriores: { data_hora: marcacao.data_hora }, dados_novos: { data_hora: normalized, motivo: justificativa || motivo || null, dia_referencia }, usuario_id: request.user.id, empresa_id: request.empresaId, ip: request.ip });
     return successResponse({ id }, 'Batida atualizada');
   });
 
@@ -302,7 +303,7 @@ export default async function marcacaoRoutes(fastify) {
       [request.empresaId, funcionario_id, data, request.user.id],
     );
 
-    auditar({ acao: 'INSERT', tabela: 'marcacoes_dia_bloqueado', registro_id: `${funcionario_id}-${data}`, dados_anteriores: null, dados_novos: { funcionario_id, data }, usuario_id: request.user.id, ip: request.ip });
+    auditar({ acao: 'INSERT', tabela: 'marcacoes_dia_bloqueado', registro_id: `${funcionario_id}-${data}`, dados_anteriores: null, dados_novos: { funcionario_id, data }, usuario_id: request.user.id, empresa_id: request.empresaId, ip: request.ip });
     return reply.code(201).send(successResponse({ funcionario_id, data, bloqueado: true }, 'Dia bloqueado'));
   });
 
@@ -330,7 +331,7 @@ export default async function marcacaoRoutes(fastify) {
       [funcionario_id, data],
     );
 
-    auditar({ acao: 'DELETE', tabela: 'marcacoes_dia_bloqueado', registro_id: `${funcionario_id}-${data}`, dados_anteriores: { funcionario_id, data }, dados_novos: null, usuario_id: request.user.id, ip: request.ip });
+    auditar({ acao: 'DELETE', tabela: 'marcacoes_dia_bloqueado', registro_id: `${funcionario_id}-${data}`, dados_anteriores: { funcionario_id, data }, dados_novos: null, usuario_id: request.user.id, empresa_id: request.empresaId, ip: request.ip });
     return successResponse({ funcionario_id, data, bloqueado: false }, 'Dia desbloqueado');
   });
 
@@ -416,6 +417,7 @@ export default async function marcacaoRoutes(fastify) {
       dados_anteriores: null,
       dados_novos: { data_inicio, data_fim, funcionarios: funcIds.length, dias: datas.length },
       usuario_id: request.user.id,
+      empresa_id: request.empresaId,
       ip: request.ip,
     });
 
@@ -482,10 +484,87 @@ export default async function marcacaoRoutes(fastify) {
       dados_anteriores: { data_inicio, data_fim, funcionarios: funcIds.length },
       dados_novos: null,
       usuario_id: request.user.id,
+      empresa_id: request.empresaId,
       ip: request.ip,
     });
 
     return successResponse({ removidos }, `${removidos} dias desbloqueados`);
+  });
+
+  const justificarPeriodoSchema = {
+    body: {
+      type: 'object',
+      required: ['funcionario_id', 'data_inicio', 'data_fim', 'modo', 'justificativa'],
+      properties: {
+        funcionario_id: { type: 'integer', minimum: 1 },
+        data_inicio:    { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        data_fim:       { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        modo:           { type: 'string', enum: ['manual', 'automatico'] },
+        justificativa:  { type: 'string', minLength: 1, maxLength: 500 },
+        horarios: {
+          type: 'object',
+          properties: {
+            entrada1: { type: 'string', pattern: '^\\d{2}:\\d{2}$', nullable: true },
+            saida1:   { type: 'string', pattern: '^\\d{2}:\\d{2}$', nullable: true },
+            entrada2: { type: 'string', pattern: '^\\d{2}:\\d{2}$', nullable: true },
+            saida2:   { type: 'string', pattern: '^\\d{2}:\\d{2}$', nullable: true },
+            entrada3: { type: 'string', pattern: '^\\d{2}:\\d{2}$', nullable: true },
+            saida3:   { type: 'string', pattern: '^\\d{2}:\\d{2}$', nullable: true },
+            entrada4: { type: 'string', pattern: '^\\d{2}:\\d{2}$', nullable: true },
+            saida4:   { type: 'string', pattern: '^\\d{2}:\\d{2}$', nullable: true },
+          },
+        },
+      },
+    },
+  };
+
+  fastify.post('/marcacoes/justificar-periodo', { schema: justificarPeriodoSchema }, async (request, reply) => {
+    if (request.user.role !== 'admin' && request.user.role !== 'gestor') {
+      return reply.code(403).send({ error: 'Acesso negado', message: 'Sem permissão para justificar períodos' });
+    }
+
+    const { funcionario_id, data_inicio, data_fim, modo, justificativa, horarios } = request.body;
+
+    if (data_inicio > data_fim) {
+      return reply.code(400).send({ error: 'Parâmetro inválido', message: 'Data início deve ser anterior ou igual à data fim' });
+    }
+
+    const dias = (new Date(data_fim + 'T12:00:00Z') - new Date(data_inicio + 'T12:00:00Z')) / 86400000 + 1;
+    if (dias > 366) {
+      return reply.code(400).send({ error: 'Parâmetro inválido', message: 'Período máximo de 366 dias' });
+    }
+
+    if (modo === 'manual' && !Object.values(horarios ?? {}).some(Boolean)) {
+      return reply.code(400).send({ error: 'Parâmetro inválido', message: 'Informe ao menos um horário para o modo manual' });
+    }
+
+    const funcionario = await FuncionarioRepository.findById(funcionario_id);
+    if (!funcionario || funcionario.empresa_id !== request.empresaId) {
+      return reply.code(404).send({ error: 'Não encontrado', message: 'Funcionário não encontrado' });
+    }
+
+    const resultado = await JustificativaPeriodoService.executar({
+      funcionario,
+      dataInicio: data_inicio,
+      dataFim: data_fim,
+      modo,
+      horariosManuais: horarios,
+      justificativa,
+      editadoPor: request.user.id,
+    });
+
+    auditar({
+      acao: 'INSERT',
+      tabela: 'marcacoes',
+      registro_id: `justificar-periodo-${funcionario_id}-${data_inicio}-${data_fim}`,
+      dados_anteriores: null,
+      dados_novos: { ...resultado, modo, funcionario_id, data_inicio, data_fim },
+      usuario_id: request.user.id,
+      empresa_id: request.empresaId,
+      ip: request.ip,
+    });
+
+    return reply.code(201).send(successResponse(resultado, `${resultado.dias_lancados} dia(s) lançado(s)`));
   });
 
   const diasBloqueadosQuerySchema = {
@@ -539,7 +618,7 @@ export default async function marcacaoRoutes(fastify) {
     }
 
     await MarcacaoRepository.deleteById(id);
-    auditar({ acao: 'DELETE', tabela: 'marcacoes', registro_id: id, dados_anteriores: { data_hora: marcacao.data_hora, funcionario_id: marcacao.funcionario_id }, dados_novos: null, usuario_id: request.user.id, ip: request.ip });
+    auditar({ acao: 'DELETE', tabela: 'marcacoes', registro_id: id, dados_anteriores: { data_hora: marcacao.data_hora, funcionario_id: marcacao.funcionario_id }, dados_novos: null, usuario_id: request.user.id, empresa_id: request.empresaId, ip: request.ip });
     return successResponse({ id }, 'Batida excluída');
   });
 }

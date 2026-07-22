@@ -147,4 +147,43 @@ export const MarcacaoRepository = {
       [tzOffset, tzOffset, funcionarioId, tzOffset, year, tzOffset, month, year, month],
     );
   },
+
+  /**
+   * Marcações do funcionário num intervalo de datas arbitrário (mesma lógica de
+   * agrupamento por dia_referencia/corte de 5h de findByFuncionarioMonth, mas
+   * parametrizada por data início/fim em vez de ano/mês).
+   */
+  async findByFuncionarioPeriodo(funcionarioId, dataInicio, dataFim, tzOffset = TZ_OFFSET_DEFAULT) {
+    return query(
+      `SELECT id,
+              data_hora,
+              dia_referencia,
+              DATE_FORMAT(
+                CASE WHEN tipo = 'rep' THEN data_hora
+                     ELSE CONVERT_TZ(data_hora, '+00:00', ?)
+                END,
+                '%Y-%m-%dT%H:%i:%s'
+              ) AS data_hora_local,
+              tipo,
+              COALESCE(
+                DATE_FORMAT(dia_referencia, '%Y-%m-%d'),
+                DATE_FORMAT(
+                  CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL 5 HOUR)
+                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)
+                  END,
+                  '%Y-%m-%d'
+                )
+              ) AS dia
+         FROM marcacoes
+        WHERE funcionario_id = ?
+          AND (
+            (DATE(CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL 5 HOUR)
+                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)
+                  END) BETWEEN ? AND ?)
+            OR (dia_referencia IS NOT NULL AND dia_referencia BETWEEN ? AND ?)
+          )
+        ORDER BY data_hora ASC`,
+      [tzOffset, tzOffset, funcionarioId, tzOffset, dataInicio, dataFim, dataInicio, dataFim],
+    );
+  },
 };

@@ -6,6 +6,7 @@ import {
   listarFuncionariosComEscala,
 } from '../services/escalaService.js';
 import { query } from '../config/database.js';
+import { auditar } from '../services/auditService.js';
 
 const gerarSchema = {
   body: {
@@ -107,6 +108,11 @@ export default async function escalasRoutes(fastify) {
     );
     if (!func) return reply.code(404).send({ error: 'Funcionário não encontrado' });
 
+    const escalaAnterior = await query(
+      'SELECT * FROM escalas WHERE funcionario_id = ? AND data BETWEEN ? AND ?',
+      [funcionario_id, data_inicio, data_fim],
+    );
+
     const dias = gerarDias({
       dataInicio: data_inicio, dataFim: data_fim,
       tipoCiclo: tipo_ciclo, inicioCiclo: inicio_ciclo,
@@ -116,6 +122,17 @@ export default async function escalasRoutes(fastify) {
     });
 
     const total = await salvarEscala(funcionario_id, request.user.id, dias, tipo_ciclo, inicio_ciclo);
+
+    auditar({
+      acao: 'INSERT',
+      tabela: 'escalas',
+      registro_id: `${funcionario_id}-${data_inicio}-${data_fim}`,
+      dados_anteriores: escalaAnterior.length > 0 ? escalaAnterior : null,
+      dados_novos: { tipo_ciclo, inicio_ciclo, dias },
+      usuario_id: request.user.id,
+      empresa_id: request.empresaId,
+      ip: request.ip,
+    });
 
     return reply.code(201).send({ success: true, total, message: `${total} dias gravados` });
   });
@@ -135,10 +152,28 @@ export default async function escalasRoutes(fastify) {
     );
     if (!func) return reply.code(404).send({ error: 'Funcionário não encontrado' });
 
+    const escalaAnterior = await query(
+      'SELECT * FROM escalas WHERE funcionario_id = ? AND data BETWEEN ? AND ?',
+      [funcionario_id, inicio, fim],
+    );
+
     const result = await query(
       'DELETE FROM escalas WHERE funcionario_id = ? AND data BETWEEN ? AND ?',
       [funcionario_id, inicio, fim]
     );
+
+    if (escalaAnterior.length > 0) {
+      auditar({
+        acao: 'DELETE',
+        tabela: 'escalas',
+        registro_id: `${funcionario_id}-${inicio}-${fim}`,
+        dados_anteriores: escalaAnterior,
+        dados_novos: null,
+        usuario_id: request.user.id,
+        empresa_id: request.empresaId,
+        ip: request.ip,
+      });
+    }
 
     return { success: true, total: result.affectedRows };
   });

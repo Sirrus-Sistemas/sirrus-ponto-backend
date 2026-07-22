@@ -51,6 +51,22 @@ export default async function cadastrosRoutes(fastify) {
     return successResponse({}, 'Município da empresa atualizado');
   });
 
+  fastify.put('/empresa/aprovacao-mobile', {
+    preHandler: [authorize('admin')],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['ativo'],
+        properties: {
+          ativo: { type: 'boolean' },
+        },
+      },
+    },
+  }, async (request) => {
+    await EmpresaRepository.updateAprovacaoMobile(request.empresaId, request.body.ativo);
+    return successResponse({}, 'Parâmetro de aprovação de batidas mobile atualizado');
+  });
+
   // ═══════════════════════════════════════════════════════════════════
   // FILIAIS
   // ═══════════════════════════════════════════════════════════════════

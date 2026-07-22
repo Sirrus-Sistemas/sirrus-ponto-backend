@@ -210,7 +210,7 @@ function virtualPunchTimestamps(punches, dataStr, tzOffsetMs) {
  * Converte string de offset ("-03:00", "UTC-05:00", "+00:00") para milissegundos.
  * Padrão: -03:00 (Brazil SE).
  */
-function parseTzOffsetMs(str) {
+export function parseTzOffsetMs(str) {
   const s = String(str || '-03:00').replace(/^UTC/, '');
   const m = s.match(/^([+-])(\d{2}):(\d{2})$/);
   if (!m) return -180 * 60000;

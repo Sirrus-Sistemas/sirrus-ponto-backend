@@ -17,6 +17,7 @@ import municipiosRoutes from './routes/municipios.js';
 import usuariosRoutes from './routes/usuarios.js';
 import relogiosRoutes from './routes/relogios.js';
 import adminRoutes from './routes/admin.js';
+import auditoriaRoutes from './routes/auditoria.js';
 
 const app = Fastify({
   logger: {
@@ -74,6 +75,7 @@ await app.register(municipiosRoutes, { prefix: '/api' });
 await app.register(usuariosRoutes, { prefix: '/api' });
 await app.register(relogiosRoutes, { prefix: '/api' });
 await app.register(adminRoutes,   { prefix: '/api' });
+await app.register(auditoriaRoutes, { prefix: '/api' });
 
 // ─── START ────────────────────────────────────────────────────────────────
 const start = async () => {

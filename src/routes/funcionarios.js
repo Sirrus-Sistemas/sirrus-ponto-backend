@@ -167,6 +167,17 @@ export default async function funcionarioRoutes(fastify) {
     const func = await FuncionarioRepository.findById(id);
     delete func.senha_hash;
 
+    auditar({
+      acao: 'INSERT',
+      tabela: 'funcionarios',
+      registro_id: id,
+      dados_anteriores: null,
+      dados_novos: func,
+      usuario_id: request.user.id,
+      empresa_id: request.empresaId,
+      ip: request.ip,
+    });
+
     return reply.code(201).send(successResponse(func, 'Funcionário criado com sucesso'));
   });
 
@@ -188,11 +199,31 @@ export default async function funcionarioRoutes(fastify) {
       updateData.senha_mobile = password;
     }
 
-    const turnoIdAnterior = func.turno_id ?? null;
     await FuncionarioRepository.update(request.params.id, updateData);
 
-    if (updateData.turno_id !== undefined && updateData.turno_id !== turnoIdAnterior) {
-      auditar({ acao: 'UPDATE', tabela: 'funcionarios', registro_id: Number(request.params.id), dados_anteriores: { turno_id: turnoIdAnterior }, dados_novos: { turno_id: updateData.turno_id }, usuario_id: request.user.id, ip: request.ip });
+    // Audita todos os campos que realmente mudaram (nunca a senha/hash)
+    const dadosAnteriores = {};
+    const dadosNovos = {};
+    for (const campo of Object.keys(updateData)) {
+      if (campo === 'senha_hash' || campo === 'senha_mobile') continue;
+      const valorAntes = func[campo] ?? null;
+      const valorDepois = updateData[campo] ?? null;
+      if (valorAntes !== valorDepois) {
+        dadosAnteriores[campo] = valorAntes;
+        dadosNovos[campo] = valorDepois;
+      }
+    }
+    if (Object.keys(dadosNovos).length > 0) {
+      auditar({
+        acao: 'UPDATE',
+        tabela: 'funcionarios',
+        registro_id: Number(request.params.id),
+        dados_anteriores: dadosAnteriores,
+        dados_novos: dadosNovos,
+        usuario_id: request.user.id,
+        empresa_id: request.empresaId,
+        ip: request.ip,
+      });
     }
 
     if (updateData.cpf !== undefined) {

@@ -362,7 +362,11 @@ async function bloquearGrupoDuplicatas(empresaId, grupo, grupoId, motivo) {
 
 // ── Importar Marcações ───────────────────────────────────────────────────────
 
-export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = null, funcionarioId = null) {
+/**
+ * Busca marcações da API mobile no período e monta o mapa mobileFuncionarioId → funcionário
+ * local ({ id, nome, fusoHorario }). Compartilhado entre pullMarcacoes e a tela de aprovação.
+ */
+async function _buscarEMapear(filialId, dataInicio, dataFim, lotacaoId = null, funcionarioId = null) {
   const [fil] = await query(
     'SELECT id, empresa_id, pontomobile_id FROM filiais WHERE id = ? LIMIT 1',
     [filialId],
@@ -404,7 +408,7 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
     }
   }
 
-  // Mapa mobileFuncionarioId → { id, fusoHorario } (filtra por filial, lotação e/ou funcionário específico)
+  // Mapa mobileFuncionarioId → { id, nome, fusoHorario } (filtra por filial, lotação e/ou funcionário específico)
   const mobileIds = [...new Set(items.map((i) => Number(i.funcionario_id)).filter(Boolean))];
   const funcMap = new Map();
   if (mobileIds.length) {
@@ -422,14 +426,28 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
       ...mobileIds,
     ];
     const funcs = await query(
-      `SELECT f.id, f.pontomobile_id, m.fuso_horario
+      `SELECT f.id, f.nome, f.pontomobile_id, m.fuso_horario
          FROM funcionarios f
          LEFT JOIN municipios m ON m.CODMUNICIPIO = f.municipio_id
         WHERE ${conditions}`,
       params,
     );
-    for (const f of funcs) funcMap.set(Number(f.pontomobile_id), { id: f.id, fusoHorario: f.fuso_horario });
+    for (const f of funcs) funcMap.set(Number(f.pontomobile_id), { id: f.id, nome: f.nome, fusoHorario: f.fuso_horario });
   }
+
+  return { fil, items, funcMap };
+}
+
+export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = null, funcionarioId = null) {
+  const { fil, items, funcMap } = await _buscarEMapear(filialId, dataInicio, dataFim, lotacaoId, funcionarioId);
+  const empresa = await query('SELECT aprovacao_mobile_ativa FROM empresas WHERE id = ?', [fil.empresa_id]);
+  const aprovacaoAtiva = Number(empresa[0]?.aprovacao_mobile_ativa) === 1;
+
+  // A API mobile trata data_fim como exclusiva; somamos 1 dia para torná-la inclusiva
+  // (necessário aqui de novo só para o cálculo de bloqueados abaixo).
+  const dataFimInclusiva = new Date(new Date(dataFim).getTime() + 86400000)
+    .toISOString()
+    .slice(0, 10);
 
   // Busca dias bloqueados para todos os funcionários locais no período.
   // Usa a mesma janela noturna de 5h do sistema: o dia de referência de uma batida
@@ -490,39 +508,32 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
         continue;
       }
 
+      // Com o parâmetro de aprovação ligado, só entram batidas já confirmadas ('C');
+      // pendentes ('A') e negadas ('N') ficam de fora até serem revisadas na tela de aprovação.
+      if (aprovacaoAtiva && item.status !== 'C') {
+        ignorados++;
+        continue;
+      }
+
       const localFuncId = funcEntry.id;
       // Usa fuso da API mobile se disponível; caso contrário usa o fuso configurado no município do funcionário
       const fusoEfetivo = item.fuso != null ? item.fuso : fusoHorarioToNumber(funcEntry.fusoHorario);
       const dataHoraUtc = marcacaoAtToUtc(item.marcacao_at, fusoEfetivo);
       const tipo = item.origem === 'REP' ? 'rep' : 'online';
 
-      // Verifica se o dia de referência desta batida está bloqueado.
-      // diaRef = DATE(T_local - 5h), mesma fórmula do SQL da ficha:
-      //   DATE(CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', tzOffset))
-      // Usa o fuso do funcionário (municipio), NÃO item.fuso da API mobile,
-      // para garantir coerência com o que a ficha exibe.
-      const utcMs = new Date(dataHoraUtc.replace(' ', 'T') + 'Z').getTime();
-      const fusoNum = fusoHorarioToNumber(funcEntry.fusoHorario); // ex.: -3 para UTC-3
-      const localMs = utcMs + fusoNum * 3600000;                  // UTC → horário local
-      const diaRef = new Date(localMs - 5 * 3600000).toISOString().slice(0, 10);
+      const diaRef = _diaReferencia(dataHoraUtc, funcEntry.fusoHorario);
       if (bloqueados.has(`${localFuncId}-${diaRef}`)) {
         bloqueados_count++;
         continue;
       }
 
-      // Deduplicata por mobile_ref_id (UNIQUE INDEX) e também por (funcionario_id, data_hora):
-      // evita re-importar batidas cujo registro original foi deletado e substituído por
-      // correção manual (que fica com mobile_ref_id = NULL e não seria bloqueada pelo índice).
-      const result = await query(
-        `INSERT IGNORE INTO marcacoes
-           (funcionario_id, data_hora, tipo, motivo_edicao, original, mobile_ref_id)
-         SELECT ?, ?, ?, ?, 0, ?
-         FROM DUAL
-         WHERE NOT EXISTS (
-           SELECT 1 FROM marcacoes WHERE funcionario_id = ? AND data_hora = ?
-         )`,
-        [localFuncId, dataHoraUtc, tipo, item.observacao || null, mobileRefId, localFuncId, dataHoraUtc],
-      );
+      const result = await _inserirMarcacaoMobile({
+        funcionarioId: localFuncId,
+        dataHoraUtc,
+        tipo,
+        observacao: item.observacao,
+        mobileRefId,
+      });
       if (result.affectedRows > 0) importados++;
       else ignorados++;
     } catch (e) {
@@ -535,6 +546,141 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
   }
 
   return { importados, ignorados, bloqueados: bloqueados_count, duplicatas_bloqueadas, erros };
+}
+
+/**
+ * Dia de referência de uma batida (mesma fórmula usada na ficha/espelho):
+ * DATE(CONVERT_TZ(DATE_SUB(data_hora_utc, INTERVAL 5 HOUR), '+00:00', tzOffset)).
+ * Usa o fuso do funcionário (município), não o `fuso` que a API mobile manda no item.
+ */
+function _diaReferencia(dataHoraUtc, fusoHorarioFuncionario) {
+  const utcMs = new Date(dataHoraUtc.replace(' ', 'T') + 'Z').getTime();
+  const fusoNum = fusoHorarioToNumber(fusoHorarioFuncionario);
+  const localMs = utcMs + fusoNum * 3600000;
+  return new Date(localMs - 5 * 3600000).toISOString().slice(0, 10);
+}
+
+/**
+ * Deduplicata por mobile_ref_id (UNIQUE INDEX) e também por (funcionario_id, data_hora):
+ * evita reimportar batidas cujo registro original foi deletado e substituído por
+ * correção manual (que fica com mobile_ref_id = NULL e não seria bloqueada pelo índice).
+ */
+async function _inserirMarcacaoMobile({ funcionarioId, dataHoraUtc, tipo, observacao, mobileRefId }) {
+  return query(
+    `INSERT IGNORE INTO marcacoes
+       (funcionario_id, data_hora, tipo, motivo_edicao, original, mobile_ref_id)
+     SELECT ?, ?, ?, ?, 0, ?
+     FROM DUAL
+     WHERE NOT EXISTS (
+       SELECT 1 FROM marcacoes WHERE funcionario_id = ? AND data_hora = ?
+     )`,
+    [funcionarioId, dataHoraUtc, tipo, observacao || null, mobileRefId, funcionarioId, dataHoraUtc],
+  );
+}
+
+// ── Aprovação de batidas do app mobile ────────────────────────────────────────
+
+/**
+ * Lista batidas do app mobile aguardando aprovação (status 'A' na API PontoMobile) num
+ * período/filial, já mapeadas para o funcionário local e com URL de foto pronta pra exibir.
+ */
+export async function listarPendentesAprovacao(filialId, dataInicio, dataFim, lotacaoId = null, funcionarioId = null) {
+  const { items, funcMap } = await _buscarEMapear(filialId, dataInicio, dataFim, lotacaoId, funcionarioId);
+
+  return items
+    .filter((i) => i.status === 'A' && funcMap.has(Number(i.funcionario_id)))
+    .map((i) => {
+      const funcEntry = funcMap.get(Number(i.funcionario_id));
+      const fusoEfetivo = i.fuso != null ? i.fuso : fusoHorarioToNumber(funcEntry.fusoHorario);
+      return {
+        mobile_id: Number(i.id),
+        funcionario_id: funcEntry.id,
+        funcionario_nome: funcEntry.nome,
+        turno: i.turno,
+        tipo: i.tipo,
+        observacao: i.observacao,
+        latitude: i.loc_latitude,
+        longitude: i.loc_longitude,
+        foto_url: i.foto ? `${BASE_URL}/storage/${i.foto}` : null,
+        data_hora_utc: marcacaoAtToUtc(i.marcacao_at, fusoEfetivo),
+      };
+    })
+    .sort((a, b) => a.data_hora_utc.localeCompare(b.data_hora_utc));
+}
+
+/**
+ * Aprova ('C') ou nega ('N') uma ou mais batidas pendentes: atualiza o status na API
+ * PontoMobile (mesmo endpoint usado pelo Delphi) e, se aprovada, insere em marcacoes.
+ */
+export async function decidirMarcacoesMobile({ itens, status, adminFuncionarioId, empresaId }) {
+  let [{ pontomobile_id: avaliadorId } = {}] = await query(
+    'SELECT pontomobile_id FROM funcionarios WHERE id = ?',
+    [adminFuncionarioId],
+  );
+  if (!avaliadorId) {
+    try {
+      avaliadorId = await syncFuncionario(adminFuncionarioId);
+    } catch (e) {
+      throw new Error(`Seu usuário precisa estar sincronizado com o Ponto Mobile para aprovar/negar batidas (${e.message}). Sincronize-se em "Ponto Mobile" → Funcionários.`);
+    }
+  }
+
+  const bloqueados = new Set();
+  if (empresaId) {
+    const funcIds = [...new Set(itens.map((i) => i.funcionario_id))];
+    if (funcIds.length > 0) {
+      const ph = funcIds.map(() => '?').join(',');
+      const diasBloq = await query(
+        `SELECT funcionario_id, DATE_FORMAT(data, '%Y-%m-%d') AS data
+           FROM marcacoes_dia_bloqueado WHERE funcionario_id IN (${ph})`,
+        funcIds,
+      );
+      for (const d of diasBloq) bloqueados.add(`${d.funcionario_id}-${d.data}`);
+    }
+  }
+
+  const funcFusos = new Map();
+  const funcIdsUnicos = [...new Set(itens.map((i) => i.funcionario_id))];
+  if (funcIdsUnicos.length > 0) {
+    const ph = funcIdsUnicos.map(() => '?').join(',');
+    const rows = await query(
+      `SELECT f.id, m.fuso_horario FROM funcionarios f LEFT JOIN municipios m ON m.CODMUNICIPIO = f.municipio_id WHERE f.id IN (${ph})`,
+      funcIdsUnicos,
+    );
+    for (const r of rows) funcFusos.set(r.id, r.fuso_horario);
+  }
+
+  let processados = 0;
+  const erros = [];
+  const CONCURRENCY = 5;
+
+  for (let i = 0; i < itens.length; i += CONCURRENCY) {
+    const lote = itens.slice(i, i + CONCURRENCY);
+    const resultados = await Promise.allSettled(lote.map(async (item) => {
+      await _request('PUT', `/admin/marcacoes/${item.mobile_id}/status`, { status, avaliador_id: avaliadorId });
+
+      if (status === 'C') {
+        const diaRef = _diaReferencia(item.data_hora_utc, funcFusos.get(item.funcionario_id));
+        if (bloqueados.has(`${item.funcionario_id}-${diaRef}`)) {
+          throw new Error('Dia bloqueado — batida não inserida em marcações');
+        }
+        const tipo = 'online';
+        await _inserirMarcacaoMobile({
+          funcionarioId: item.funcionario_id,
+          dataHoraUtc: item.data_hora_utc,
+          tipo,
+          observacao: item.observacao,
+          mobileRefId: item.mobile_id,
+        });
+      }
+    }));
+    resultados.forEach((r, idx) => {
+      if (r.status === 'fulfilled') processados++;
+      else erros.push({ mobile_id: lote[idx].mobile_id, error: r.reason?.message });
+    });
+  }
+
+  return { processados, erros };
 }
 
 // ── Gestão de batidas bloqueadas ──────────────────────────────────────────────

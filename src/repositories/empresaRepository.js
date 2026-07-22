@@ -4,7 +4,7 @@ export const EmpresaRepository = {
   async findById(id) {
     const rows = await query(
       `SELECT e.id, e.razao_social, e.nome_fantasia, e.cnpj, e.endereco, e.cidade, e.uf,
-              e.municipio_id, e.max_filiais, e.max_funcionarios,
+              e.municipio_id, e.max_filiais, e.max_funcionarios, e.aprovacao_mobile_ativa,
               m.NOMEMUNICIPIO AS municipio_nome,
               m.ESTADO        AS municipio_estado,
               m.fuso_horario  AS municipio_fuso_horario
@@ -21,6 +21,13 @@ export const EmpresaRepository = {
     await query(
       'UPDATE empresas SET municipio_id = ? WHERE id = ?',
       [municipioId ?? null, empresaId],
+    );
+  },
+
+  async updateAprovacaoMobile(empresaId, ativo) {
+    await query(
+      'UPDATE empresas SET aprovacao_mobile_ativa = ? WHERE id = ?',
+      [ativo ? 1 : 0, empresaId],
     );
   },
 

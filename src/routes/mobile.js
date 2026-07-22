@@ -9,7 +9,10 @@ import {
   listarBloqueadas,
   desbloquearBloqueada,
   isMobileConfigured,
+  listarPendentesAprovacao,
+  decidirMarcacoesMobile,
 } from '../services/pontoMobileService.js';
+import { auditar } from '../services/auditService.js';
 
 export default async function mobileRoutes(fastify) {
   fastify.addHook('preHandler', authenticate);
@@ -131,6 +134,95 @@ export default async function mobileRoutes(fastify) {
       const funcionarioId = request.query.funcionario_id ?? null;
       const bloqueadas = await listarBloqueadas(request.empresaId, funcionarioId);
       return successResponse(bloqueadas);
+    },
+  );
+
+  // ── Aprovação de batidas do app mobile ───────────────────────────────────────
+
+  fastify.get(
+    '/mobile/aprovacao/pendentes',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          required: ['filial_id', 'data_inicio', 'data_fim'],
+          properties: {
+            filial_id: { type: 'integer', minimum: 1 },
+            data_inicio: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+            data_fim: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+            lotacao_id: { type: 'integer', minimum: 1 },
+            funcionario_id: { type: 'integer', minimum: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      const { filial_id, data_inicio, data_fim, lotacao_id, funcionario_id } = request.query;
+      try {
+        const pendentes = await listarPendentesAprovacao(filial_id, data_inicio, data_fim, lotacao_id ?? null, funcionario_id ?? null);
+        return successResponse(pendentes);
+      } catch (e) {
+        return reply.code(400).send({ error: 'Erro ao buscar pendentes', message: e.message });
+      }
+    },
+  );
+
+  fastify.post(
+    '/mobile/aprovacao/decidir',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['itens', 'status'],
+          properties: {
+            status: { type: 'string', enum: ['C', 'N'] },
+            itens: {
+              type: 'array',
+              minItems: 1,
+              items: {
+                type: 'object',
+                required: ['mobile_id', 'funcionario_id', 'data_hora_utc'],
+                properties: {
+                  mobile_id: { type: 'integer', minimum: 1 },
+                  funcionario_id: { type: 'integer', minimum: 1 },
+                  data_hora_utc: { type: 'string' },
+                  observacao: { type: ['string', 'null'] },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      const { itens, status } = request.body;
+      let resultado;
+      try {
+        resultado = await decidirMarcacoesMobile({
+          itens,
+          status,
+          adminFuncionarioId: request.user.id,
+          empresaId: request.empresaId,
+        });
+      } catch (e) {
+        return reply.code(400).send({ error: 'Erro ao decidir', message: e.message });
+      }
+      auditar({
+        acao: 'UPDATE',
+        tabela: 'marcacoes_mobile_aprovacao',
+        registro_id: `${status}-${itens.length}`,
+        dados_anteriores: null,
+        dados_novos: resultado,
+        usuario_id: request.user.id,
+        empresa_id: request.empresaId,
+        ip: request.ip,
+      });
+      const msg = status === 'C'
+        ? `${resultado.processados} batida(s) aprovada(s)`
+        : `${resultado.processados} batida(s) negada(s)`;
+      return successResponse(resultado, msg);
     },
   );
 
