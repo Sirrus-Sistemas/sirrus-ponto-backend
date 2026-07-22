@@ -22,18 +22,26 @@ function anoRazoavel(ano) {
 
 /**
  * Layout da portaria 1510: NSR(9) TIPO(1) DDMMAAAA(8) HHMM(4) PIS(12).
- * Não filtra por tipo — o 1510 não distingue tipos de registro do jeito
- * que o AFD-T da 671 faz.
+ * Só sobrevive quando TIPO == '3' (marcação de ponto) — validado contra um
+ * AFD real: o mesmo arquivo tem outros tipos de registro (cabeçalho da
+ * empresa, evento de identificação de funcionário com nome embutido,
+ * rodapé/assinatura), cada um com layout diferente. Sem esse filtro, os
+ * campos data/PIS eram lidos nas posições fixas de uma "marcação" mesmo
+ * para essas outras linhas, produzindo PIS corrompido (ex.: um caractere
+ * indicador do registro tipo 5 vazando pra dentro do PIS) e até batidas
+ * fantasma (ex.: um registro tipo 4 misparseado como data de 2001).
  */
 function parseLinha1510(linha) {
   const nsrStr = substr(linha, 1, 9);
+  const tipo = substr(linha, 10, 1);
   const dia = substr(linha, 11, 2);
   const mes = substr(linha, 13, 2);
   const ano = substr(linha, 15, 4);
   const hora = substr(linha, 19, 2);
   const minuto = substr(linha, 21, 2);
   const pisStr = substr(linha, 23, 12);
-  if ([nsrStr, dia, mes, ano, hora, minuto, pisStr].some((v) => v === null)) return null;
+  if ([nsrStr, tipo, dia, mes, ano, hora, minuto, pisStr].some((v) => v === null)) return null;
+  if (tipo !== '3') return null;
 
   const nsr = parseInt(nsrStr, 10);
   const pis = pisStr.trim();

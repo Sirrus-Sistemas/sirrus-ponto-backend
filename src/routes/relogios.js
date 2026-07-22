@@ -249,19 +249,11 @@ export default async function relogiosRoutes(fastify) {
     const chave = chaveParaModelo(relogio.modelo);
     const marcacoes = parseAfd(conteudo, chave);
 
-    const resumo = { total_linhas: marcacoes.length, inserida: 0, duplicada: 0, pendente: 0 };
-    for (const m of marcacoes) {
-      const funcionarioId = await FuncionarioRepository.findByCpfOuPis(request.empresaId, { cpf: m.cpf, pis: m.pis });
-      const status = await RelogioMarcacaoRepository.importar({
-        relogioId,
-        nsr: m.nsr,
-        cpf: m.cpf ?? null,
-        pis: m.pis ?? null,
-        dataHora: m.dataHora,
-        funcionarioId,
-      });
-      resumo[status] = (resumo[status] ?? 0) + 1;
-    }
+    const resumo = await RelogioMarcacaoRepository.importarLote({
+      relogioId,
+      empresaId: request.empresaId,
+      marcacoes,
+    });
 
     return reply.code(201).send(successResponse(resumo, 'Arquivo AFD importado.'));
   });
