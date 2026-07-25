@@ -334,10 +334,16 @@ function detectarGruposDuplicatas(items, funcMap) {
 /**
  * Bloqueia um grupo de duplicatas em marcacoes_bloqueadas
  */
-async function bloquearGrupoDuplicatas(empresaId, grupo, grupoId, motivo) {
+async function bloquearGrupoDuplicatas(empresaId, grupo, grupoId, motivo, funcMap) {
   let bloqueadas = 0;
   for (const item of grupo) {
     try {
+      const funcEntry = funcMap.get(Number(item.funcionario_id));
+      // marcacao_at vem da API mobile em ISO 8601 (ex.: "...T21:55:24.000000Z"),
+      // formato que o MySQL rejeita direto — precisa passar por marcacaoAtToUtc
+      // (mesma conversão usada ao inserir em `marcacoes`) antes de gravar.
+      const fusoEfetivo = item.fuso != null ? item.fuso : fusoHorarioToNumber(funcEntry?.fusoHorario);
+      const dataHoraUtc = marcacaoAtToUtc(item.marcacao_at, fusoEfetivo);
       await query(
         `INSERT INTO marcacoes_bloqueadas
            (empresa_id, funcionario_id, data_hora, tipo, mobile_ref_id, grupo_id, motivo_bloqueio)
@@ -345,7 +351,7 @@ async function bloquearGrupoDuplicatas(empresaId, grupo, grupoId, motivo) {
         [
           empresaId,
           Number(item.funcionario_id),
-          item.marcacao_at,
+          dataHoraUtc,
           item.origem === 'REP' ? 'rep' : 'online',
           Number(item.id),
           grupoId,
@@ -490,7 +496,7 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
       })
       .join(', ');
     const motivo = `Grupo de duplicatas: ${horariosStr}`;
-    const nBloqueadas = await bloquearGrupoDuplicatas(fil.empresa_id, grupo, grupoId, motivo);
+    const nBloqueadas = await bloquearGrupoDuplicatas(fil.empresa_id, grupo, grupoId, motivo, funcMap);
     duplicatas_bloqueadas += nBloqueadas;
   }
 

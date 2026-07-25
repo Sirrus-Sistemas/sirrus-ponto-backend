@@ -15,6 +15,10 @@ export const AuditRepository = {
   async listar(empresaId, filtros) {
     const { where, params } = buildWhere(empresaId, filtros);
     const { limit = 50, offset = 0 } = filtros;
+    // LIMIT/OFFSET interpolados pois mysql2 execute() rejeita inteiros bound
+    // (ER_WRONG_ARGUMENTS) — mesmo padrão de funcionarioRepository.js.
+    const safeLimit = parseInt(limit, 10);
+    const safeOffset = parseInt(offset, 10);
     return query(
       `SELECT a.id, a.usuario_id, a.acao, a.tabela, a.registro_id,
               a.dados_anteriores, a.dados_novos, a.ip_address, a.created_at,
@@ -23,8 +27,8 @@ export const AuditRepository = {
          LEFT JOIN funcionarios f ON f.id = a.usuario_id
         WHERE ${where}
         ORDER BY a.created_at DESC
-        LIMIT ? OFFSET ?`,
-      [...params, limit, offset],
+        LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+      params,
     );
   },
 
