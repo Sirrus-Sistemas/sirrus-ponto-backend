@@ -218,11 +218,16 @@ export function parseTzOffsetMs(str) {
 }
 
 /**
- * Converte fuso_horario do município ("UTC-05:00") para offset SQL ("-05:00").
+ * Converte fuso_horario do município para offset SQL ("-05:00"). Aceita tanto
+ * "UTC-05:00" (os 2 municípios cadastrados manualmente pela tela) quanto
+ * "-05:00" sem prefixo (os 5.563 municípios da importação IBGE — a grande
+ * maioria) — o "UTC" antes do sinal é opcional, não obrigatório. Sem essa
+ * tolerância, todo município importado do IBGE (ou seja, quase todos) caía
+ * silenciosamente no padrão abaixo em vez do fuso real.
  * Padrão: "-03:00".
  */
 export function fusoHorarioToTzOffset(fusoHorario) {
-  const m = String(fusoHorario || '').match(/UTC([+-]\d{2}:\d{2})/);
+  const m = String(fusoHorario || '').match(/(?:UTC)?([+-]\d{2}:\d{2})/);
   return m ? m[1] : (process.env.APP_TZ_OFFSET || '-03:00');
 }
 

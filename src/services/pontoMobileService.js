@@ -87,9 +87,14 @@ async function _resolverMobileIdPorCpf(cpf, senhasTentativa) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Converte "UTC-05:00" → -5, "UTC-03:30" → -3.5. Padrão: -3. */
+/**
+ * Converte "UTC-05:00" ou "-05:00" (sem prefixo — formato da importação IBGE,
+ * usado por 5.563 dos 5.565 municípios) → -5; "UTC-03:30" → -3.5. Padrão: -3.
+ * O "UTC" é opcional: exigi-lo fazia o fuso real de quase todo município
+ * cair silenciosamente no padrão.
+ */
 function fusoHorarioToNumber(fusoHorario) {
-  const m = String(fusoHorario || '').match(/UTC([+-])(\d{2}):(\d{2})/);
+  const m = String(fusoHorario || '').match(/(?:UTC)?([+-])(\d{2}):(\d{2})/);
   if (!m) return -3;
   const sign = m[1] === '+' ? 1 : -1;
   return sign * (Number(m[2]) + Number(m[3]) / 60);
