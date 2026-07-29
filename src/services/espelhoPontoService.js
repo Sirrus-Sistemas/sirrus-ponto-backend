@@ -691,31 +691,28 @@ export const EspelhoPontoService = {
       let horarios_previstos = [];
       if (usaEscala && escalaEntry && escalaEntry.tipo === 'trabalho') {
         const campos = ['entrada1','saida1','entrada2','saida2','entrada3','saida3','entrada4','saida4'];
-        horarios_previstos = campos.map((c) => escalaEntry[c]).filter(Boolean);
+        horarios_previstos = campos.map((c) => escalaEntry[c]).filter(Boolean).map((h) => String(h).slice(0, 5));
       } else if (hasTurnoHorarios) {
         const th = turnoHorariosMap.get(dow);
         if (th && th.trabalha) {
-          horarios_previstos = [th.entrada, th.saida_intervalo, th.retorno_intervalo, th.saida].filter(Boolean);
+          horarios_previstos = [th.entrada, th.saida_intervalo, th.retorno_intervalo, th.saida].filter(Boolean).map((h) => String(h).slice(0, 5));
         }
       } else if (funcionario) {
-        horarios_previstos = [funcionario.turno_entrada, funcionario.turno_saida_intervalo, funcionario.turno_retorno_intervalo, funcionario.turno_saida].filter(Boolean);
+        horarios_previstos = [funcionario.turno_entrada, funcionario.turno_saida_intervalo, funcionario.turno_retorno_intervalo, funcionario.turno_saida].filter(Boolean).map((h) => String(h).slice(0, 5));
       }
 
-      // Filtra horarios_previstos: remove os que já têm batidas correspondentes
-      // Converte batidas de UTC para LOCAL usando tzOffsetMs do colaborador
+      // Filtra horarios_previstos: casa por ORDEM/CONTAGEM (posição), não por
+      // igualdade exata de horário — mesmo bug e mesmo fix de
+      // justificativaPeriodoService.js. Os campos TIME do MySQL vêm com segundos
+      // ("08:00:00"), então a comparação por string nunca batia nem por coincidência;
+      // e mesmo comparando só HH:MM, o funcionário quase nunca bate no minuto exato
+      // previsto — a batida real já lançada nunca "cancelava" o horário previsto
+      // correspondente, reenviando a jornada inteira como pendente pro botão de
+      // Justificativa Automática. Já existem N batidas reais nesse dia → considera
+      // pendentes só os horários previstos a partir do N-ésimo (pula os N primeiros,
+      // na ordem E1/S1/E2/S2...).
       if (horarios_previstos.length > 0 && rawDedup.length > 0) {
-        const horasLocaisComBatida = new Set();
-        for (const batida of rawDedup) {
-          // data_hora vem do MySQL como string; converter para Date tratando como UTC
-          // Formato: "2026-06-17 04:00:00" → interpretar como UTC
-          const batidaIso = String(batida.data_hora).replace(' ', 'T') + 'Z';
-          const utcMs = new Date(batidaIso).getTime();
-          const localMs = utcMs + tzOffsetMs;
-          const dtLocal = new Date(localMs);
-          const hhmm = `${String(dtLocal.getUTCHours()).padStart(2, '0')}:${String(dtLocal.getUTCMinutes()).padStart(2, '0')}`;
-          horasLocaisComBatida.add(hhmm);
-        }
-        horarios_previstos = horarios_previstos.filter(hp => !horasLocaisComBatida.has(hp));
+        horarios_previstos = horarios_previstos.slice(rawDedup.length);
       }
 
       return {
