@@ -149,13 +149,19 @@ export const JustificativaPeriodoService = {
       const existentes = existentesPorDia.get(data) ?? new Set();
 
       // Manual: cada horário mantém sua posição fixa (slot_override = índice E1..S4).
-      // Automático: lista compacta de horários previstos (escala/turno), sem slot fixo.
+      // Automático: casa por ORDEM/CONTAGEM, não por igualdade exata de minuto — o
+      // funcionário quase nunca bate ponto no minuto exato previsto pela escala/turno,
+      // então comparar "horário previsto === horário real" nunca reconhecia a batida já
+      // existente e lançava a jornada inteira por cima (inclusive a 1ª batida real),
+      // virando uma batida extra em vez de completar só o que faltava. Já existem N
+      // batidas reais nesse dia → pula os N primeiros horários previstos (cronológicos)
+      // e lança só os restantes.
       const alvosFinal = modo === 'manual'
         ? SLOT_FIELDS
             .map((campo, idx) => ({ hora: horariosManuais?.[campo]?.slice(0, 5), slotOverride: idx }))
             .filter((a) => a.hora && !existentes.has(a.hora))
         : horariosAlvo
-            .filter((h) => !existentes.has(h))
+            .slice(existentes.size)
             .map((h) => ({ hora: h, slotOverride: null }));
 
       if (alvosFinal.length === 0) {
