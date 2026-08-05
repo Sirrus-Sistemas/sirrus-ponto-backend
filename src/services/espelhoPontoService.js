@@ -186,6 +186,25 @@ function localMidnightUtcMs(dataStr, tzOffsetMs) {
 }
 
 /**
+ * Batidas tipo='rep' guardam data_hora já em horário LOCAL do relógio de ponto
+ * (migration 035_rep_data_hora_local.sql) — nunca passam por conversão de fuso,
+ * ao contrário de manual/online/geo, que são UTC de verdade. As contas de
+ * adicional noturno abaixo (fronteiras 22:00/05:00 e meia-noite) presumem que
+ * todo data_hora é UTC de verdade e somam tzOffsetMs por cima; para tipo='rep'
+ * isso aplica o fuso uma segunda vez, deslocando o horário e "vazando" pra
+ * dentro da janela noturna mesmo num turno totalmente diurno (ex.: fuso
+ * -04:00 desloca uma batida real das 08:09 pra 04:09, dentro de [00:00,05:00)).
+ * Pré-compensa subtraindo o mesmo tzOffsetMs só para rep, cancelando a soma
+ * que as funções abaixo já fazem — resultado: rep fica com o horário literal
+ * gravado, sem deslocamento nenhum; os demais tipos continuam convertidos
+ * normalmente.
+ */
+function ajustarBatidaParaFronteira(p, tzOffsetMs) {
+  const utcMs = new Date(p.data_hora).getTime();
+  return p.tipo === 'rep' ? utcMs - tzOffsetMs : utcMs;
+}
+
+/**
  * Converte as batidas de um dia em timestamps "virtuais": preserva o horário do
  * relógio de cada uma e avança 24h sempre que a sequência retrocede no horário,
  * em vez de usar a data_hora real. dia_referencia pode reatribuir uma batida a um
@@ -271,11 +290,15 @@ function minutosNocturnosPar(punches, noturnoInicioMin, tzOffsetMs, dataStr, cal
     return total;
   }
 
-  // Comportamento original: ordena por data_hora absoluta antes de somar pares
-  const times = punches.map((p) => new Date(p.data_hora).getTime()).sort((a, b) => a - b);
+  // Comportamento original: ordena por data_hora absoluta (crua) antes de
+  // somar pares, mas usa o valor ajustado por tipo (ver ajustarBatidaParaFronteira)
+  // na conta da janela noturna.
+  const ordenadas = [...punches].sort((a, b) => new Date(a.data_hora) - new Date(b.data_hora));
   let total = 0;
-  for (let i = 0; i + 1 < times.length; i += 2) {
-    total += minutosNocturnosIntervalo(times[i], times[i + 1], noturnoInicioMin, tzOffsetMs);
+  for (let i = 0; i + 1 < ordenadas.length; i += 2) {
+    const inicio = ajustarBatidaParaFronteira(ordenadas[i], tzOffsetMs);
+    const fim = ajustarBatidaParaFronteira(ordenadas[i + 1], tzOffsetMs);
+    total += minutosNocturnosIntervalo(inicio, fim, noturnoInicioMin, tzOffsetMs);
   }
   return total;
 }
@@ -302,12 +325,15 @@ function minutosAposMeiaNoite(punches, shiftDateStr, tzOffsetMs, calcularParesSe
     return Math.round(total / 60000);
   }
 
-  // Comportamento original: ordena por data_hora absoluta antes de somar pares
-  const times = punches.map((p) => new Date(p.data_hora).getTime()).sort((a, b) => a - b);
+  // Comportamento original: ordena por data_hora absoluta (crua) antes de
+  // somar pares, mas usa o valor ajustado por tipo (ver ajustarBatidaParaFronteira)
+  // na comparação com a meia-noite.
+  const ordenadas = [...punches].sort((a, b) => new Date(a.data_hora) - new Date(b.data_hora));
   let total = 0;
-  for (let i = 0; i + 1 < times.length; i += 2) {
-    const end = times[i + 1];
-    if (end > midnightMs) total += end - Math.max(times[i], midnightMs);
+  for (let i = 0; i + 1 < ordenadas.length; i += 2) {
+    const inicio = ajustarBatidaParaFronteira(ordenadas[i], tzOffsetMs);
+    const fim = ajustarBatidaParaFronteira(ordenadas[i + 1], tzOffsetMs);
+    if (fim > midnightMs) total += fim - Math.max(inicio, midnightMs);
   }
   return Math.round(total / 60000);
 }
