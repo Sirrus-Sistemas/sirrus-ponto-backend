@@ -612,8 +612,15 @@ export const EspelhoPontoService = {
         }
       }
 
+      // Quando o turno tem tabela por dia da semana (turno_horarios), a contagem
+      // específica do dia tem prioridade sobre o padrão fixo do turno — senão um
+      // sábado de meio período (2 batidas: entrada+saída, sem intervalo) sempre
+      // ficaria "Inconsistente" por esperar o mesmo número fixo (ex.: 4) de todo
+      // dia, ignorando a variação que a própria turno_horarios existe pra descrever.
+      // O valor fixo do turno só entra como fallback quando o dia não tem
+      // configuração própria (ex.: batidasEsperadasDoDia retorna null em folga).
       const batidasEsperadasHoje = hasTurnoHorarios
-        ? (batidasEsperadasDia ?? batidasEsperadasDoDia(turnoHorariosMap.get(dow)))
+        ? (batidasEsperadasDoDia(turnoHorariosMap.get(dow)) ?? batidasEsperadasDia)
         : batidasEsperadasDia;
 
       // incompleto: derive from modifiers (set in cascade above) + cicloBatidas check
