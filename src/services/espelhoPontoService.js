@@ -122,8 +122,15 @@ function minutosTrabalhadosPar(punches, dataStr, tzOffsetMs, calcularParesSemDat
     return { minutos, incompleto: punches.length % 2 === 1 };
   }
 
-  // Comportamento original: ordena por data_hora absoluta antes de somar pares
-  const times = punches.map((p) => new Date(p.data_hora).getTime()).sort((a, b) => a - b);
+  // Comportamento original: ordena por data_hora absoluta (crua) antes de somar
+  // pares, mas usa o valor ajustado por tipo (ver ajustarBatidaParaFronteira) na
+  // duração — necessário em dias com mistura de tipos (ex.: 3 batidas rep + 1
+  // lançamento manual/justificativa cobrindo a 4ª). rep grava o horário já local
+  // (sem conversão); manual/online/geo é UTC de verdade. Sem normalizar pro mesmo
+  // referencial antes de subtrair, um par que cruza esse limite (rep→não-rep)
+  // "ganha" ou "perde" o fuso inteiro na duração (ex.: 4h vira 8h com fuso -04:00).
+  const ordenadas = [...punches].sort((a, b) => new Date(a.data_hora) - new Date(b.data_hora));
+  const times = ordenadas.map((p) => ajustarBatidaParaFronteira(p, tzOffsetMs));
   let minutos = 0;
   for (let i = 0; i + 1 < times.length; i += 2) {
     minutos += Math.round((times[i + 1] - times[i]) / 60000);
