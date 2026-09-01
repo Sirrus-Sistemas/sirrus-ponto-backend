@@ -247,7 +247,16 @@ export default async function relogiosRoutes(fastify) {
     const buffer = await file.toBuffer();
     const conteudo = buffer.toString('utf-8');
     const chave = chaveParaModelo(relogio.modelo);
-    const marcacoes = parseAfd(conteudo, chave);
+    let marcacoes = parseAfd(conteudo, chave);
+
+    // Filtro de período opcional: o AFD do equipamento costuma vir com
+    // anos de histórico, mas o operador às vezes só quer importar uma
+    // semana ou um mês específico. dataHora é "AAAA-MM-DD HH:MM:SS", então
+    // dá pra comparar como string contra os limites "AAAA-MM-DD".
+    const dataInicio = file.fields?.data_inicio?.value || null;
+    const dataFim = file.fields?.data_fim?.value || null;
+    if (dataInicio) marcacoes = marcacoes.filter((m) => m.dataHora.slice(0, 10) >= dataInicio);
+    if (dataFim) marcacoes = marcacoes.filter((m) => m.dataHora.slice(0, 10) <= dataFim);
 
     const resumo = await RelogioMarcacaoRepository.importarLote({
       relogioId,
