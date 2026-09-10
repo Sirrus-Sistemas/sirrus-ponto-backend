@@ -11,7 +11,7 @@ const COLUNAS = [
   { titulo: 'Nome*', largura: 30, textoLivre: true },
   { titulo: 'Email*', largura: 30, textoLivre: true },
   { titulo: 'CPF*', largura: 16, textoLivre: true },
-  { titulo: 'Data de Admissão* (DD/MM/AAAA)', largura: 22, textoLivre: true },
+  { titulo: 'Data de Admissão (DD/MM/AAAA)', largura: 22, textoLivre: true },
   { titulo: 'Cargo', largura: 20, textoLivre: true },
   { titulo: 'Matrícula', largura: 16, textoLivre: true },
   { titulo: 'PIS', largura: 16, textoLivre: true },
@@ -75,7 +75,8 @@ export async function importarFuncionarios(buffer, empresaId) {
     const nome = textoDaCelula(celulas[0]);
     const email = textoDaCelula(celulas[1]);
     const cpf = onlyCpfDigits(textoDaCelula(celulas[2]));
-    const dataAdmissao = dataDaCelula(celulas[3]);
+    const dataAdmissaoTexto = textoDaCelula(celulas[3]);
+    const dataAdmissao = dataAdmissaoTexto === '' ? null : dataDaCelula(celulas[3]);
     const cargo = textoDaCelula(celulas[4]);
     const matricula = textoDaCelula(celulas[5]);
     const pis = textoDaCelula(celulas[6]);
@@ -93,7 +94,7 @@ export async function importarFuncionarios(buffer, empresaId) {
     else if (cpfsNoBanco.has(cpf)) erro('CPF', 'Este CPF já está cadastrado no sistema.');
     else if (cpfsNoArquivo.has(cpf)) erro('CPF', 'CPF repetido nesta planilha.');
     if (email && emailsNoArquivo.has(email.toLowerCase())) erro('Email', 'Email repetido nesta planilha.');
-    if (!dataAdmissao) erro('Data de Admissão', 'Use o formato DD/MM/AAAA.');
+    if (dataAdmissaoTexto !== '' && !dataAdmissao) erro('Data de Admissão', 'Use o formato DD/MM/AAAA.');
     if (role !== '' && !ROLES_VALIDOS.includes(role)) erro('Perfil', 'Deve ser admin, gestor ou funcionario.');
 
     let lotacaoId = null;
