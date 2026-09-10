@@ -8,6 +8,7 @@ import { parsePagination, paginatedResponse, successResponse } from '../utils/he
 import { auditar } from '../services/auditService.js';
 import { RelogioSyncRepository } from '../repositories/relogioSyncRepository.js';
 import { RelogioMarcacaoRepository } from '../repositories/relogioMarcacaoRepository.js';
+import { gerarModeloFuncionarios, importarFuncionarios } from '../services/importFuncionariosService.js';
 
 const createSchema = {
   body: {
@@ -239,6 +240,30 @@ export default async function funcionarioRoutes(fastify) {
     delete updated.senha_hash;
 
     return successResponse(updated, 'Funcionário atualizado com sucesso');
+  });
+
+  // ─── Import inicial (planilha) ─────────────────────────────────────
+
+  fastify.get('/funcionarios/importar/modelo', {
+    preHandler: [authorize('admin')],
+  }, async (request, reply) => {
+    const buffer = await gerarModeloFuncionarios();
+    reply
+      .header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      .header('Content-Disposition', 'attachment; filename="modelo-funcionarios.xlsx"')
+      .send(buffer);
+  });
+
+  fastify.post('/funcionarios/importar', {
+    preHandler: [authorize('admin')],
+  }, async (request, reply) => {
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ message: 'Envie a planilha .xlsx.' });
+    const buffer = await file.toBuffer();
+
+    const resultado = await importarFuncionarios(buffer, request.empresaId);
+    if (resultado.erros) return reply.code(422).send({ message: 'Corrija os erros e envie novamente.', erros: resultado.erros });
+    return reply.code(201).send(successResponse(resultado, `${resultado.importados} funcionário(s) importado(s).`));
   });
 
   // ─── GET /funcionarios/minha-equipe ───────────────────────────────

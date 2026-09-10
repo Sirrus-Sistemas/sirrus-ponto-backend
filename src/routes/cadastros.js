@@ -2,6 +2,8 @@ import { authenticate, authorize, empresaScope } from '../middlewares/auth.js';
 import { query, transaction } from '../config/database.js';
 import { successResponse } from '../utils/helpers.js';
 import { EmpresaRepository } from '../repositories/empresaRepository.js';
+import { gerarModeloLotacoes, importarLotacoes } from '../services/importLotacoesService.js';
+import { gerarModeloTurnos, importarTurnos } from '../services/importTurnosService.js';
 
 function calcCargaMinutos(entrada, saida_intervalo, retorno_intervalo, saida) {
   if (!entrada || !saida) return 0;
@@ -290,6 +292,30 @@ export default async function cadastrosRoutes(fastify) {
     return successResponse(null, 'Turno atualizado');
   });
 
+  // ── Import inicial (planilha) ───────────────────────────────────────
+
+  fastify.get('/turnos/importar/modelo', {
+    preHandler: [authorize('admin')],
+  }, async (request, reply) => {
+    const buffer = await gerarModeloTurnos();
+    reply
+      .header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      .header('Content-Disposition', 'attachment; filename="modelo-tabela-horarios.xlsx"')
+      .send(buffer);
+  });
+
+  fastify.post('/turnos/importar', {
+    preHandler: [authorize('admin')],
+  }, async (request, reply) => {
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ message: 'Envie a planilha .xlsx.' });
+    const buffer = await file.toBuffer();
+
+    const resultado = await importarTurnos(buffer, request.empresaId);
+    if (resultado.erros) return reply.code(422).send({ message: 'Corrija os erros e envie novamente.', erros: resultado.erros });
+    return reply.code(201).send(successResponse(resultado, `${resultado.importados} tabela(s) de horário importada(s).`));
+  });
+
   // ── Horários por dia da semana ──────────────────────────────────────
 
   fastify.get('/turnos/:id/horarios', {
@@ -475,6 +501,30 @@ export default async function cadastrosRoutes(fastify) {
     values.push(request.params.id, request.empresaId);
     await query(`UPDATE lotacoes SET ${fields.join(', ')} WHERE id = ? AND empresa_id = ?`, values);
     return successResponse(null, 'Lotação atualizada');
+  });
+
+  // ── Import inicial (planilha) ───────────────────────────────────────
+
+  fastify.get('/lotacoes/importar/modelo', {
+    preHandler: [authorize('admin')],
+  }, async (request, reply) => {
+    const buffer = await gerarModeloLotacoes();
+    reply
+      .header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      .header('Content-Disposition', 'attachment; filename="modelo-lotacoes.xlsx"')
+      .send(buffer);
+  });
+
+  fastify.post('/lotacoes/importar', {
+    preHandler: [authorize('admin')],
+  }, async (request, reply) => {
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ message: 'Envie a planilha .xlsx.' });
+    const buffer = await file.toBuffer();
+
+    const resultado = await importarLotacoes(buffer, request.empresaId);
+    if (resultado.erros) return reply.code(422).send({ message: 'Corrija os erros e envie novamente.', erros: resultado.erros });
+    return reply.code(201).send(successResponse(resultado, `${resultado.importados} lotação(ões) importada(s).`));
   });
 
   // ═══════════════════════════════════════════════════════════════════
