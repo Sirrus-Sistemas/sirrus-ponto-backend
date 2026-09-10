@@ -77,6 +77,7 @@ function valorBruto(cell) {
   if (typeof v === 'object' && Array.isArray(v.richText)) {
     return v.richText.map((r) => r.text).join('').trim();
   }
+  if (typeof v === 'object' && typeof v.text === 'string' && 'hyperlink' in v) return v.text.trim();
   if (typeof v === 'object' && 'result' in v) return String(v.result ?? '').trim();
   return v;
 }
