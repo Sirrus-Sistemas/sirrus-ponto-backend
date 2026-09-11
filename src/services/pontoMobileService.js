@@ -19,6 +19,21 @@ const BASE_URL = (process.env.PONTOMOBILE_URL || '').replace(/\/$/, '');
 let _token = null;
 let _tokenExpiry = 0;
 
+/**
+ * A API mobile normalmente responde JSON, mas um erro de infra (proxy fora do ar,
+ * fatal error do PHP, etc.) pode devolver HTML — JSON.parse cru quebraria com uma
+ * exceção genérica que mascara o motivo real. Aqui devolve null nesse caso, pra
+ * quem chama usar o texto bruto como detalhe do erro.
+ */
+function _parseJsonSafe(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 async function _request(method, path, body = null, retries = 3) {
   if (!BASE_URL) throw new Error('PONTOMOBILE_URL não configurada.');
   const token = await _getToken();
@@ -33,14 +48,19 @@ async function _request(method, path, body = null, retries = 3) {
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(`${BASE_URL}/api/v1${path}`, opts);
   const text = await res.text();
-  const json = text ? JSON.parse(text) : {};
+
   if (res.status === 429 && retries > 0) {
     const retryAfter = Number(res.headers.get('Retry-After') || 0) || 60;
     await new Promise((r) => setTimeout(r, retryAfter * 1000));
     return _request(method, path, body, retries - 1);
   }
-  if (!res.ok) throw new Error(`Mobile API ${res.status}: ${json?.message ?? text}`);
-  return json;
+
+  const json = _parseJsonSafe(text);
+  if (!res.ok) {
+    const detalhe = json?.message ?? (text ? text.slice(0, 300) : res.statusText || `HTTP ${res.status}`);
+    throw new Error(`Mobile API ${res.status}: ${detalhe}`);
+  }
+  return json ?? {};
 }
 
 async function _getToken() {
@@ -56,8 +76,13 @@ async function _getToken() {
       password: process.env.PONTOMOBILE_SENHA,
     }),
   });
-  const json = await res.json();
-  if (!res.ok) throw new Error(`Login mobile falhou: ${json?.message ?? res.status}`);
+  const text = await res.text();
+  const json = _parseJsonSafe(text);
+  if (!res.ok) {
+    const detalhe = json?.message ?? (text ? text.slice(0, 300) : `HTTP ${res.status}`);
+    throw new Error(`Login mobile falhou: ${detalhe}`);
+  }
+  if (!json?.access_token) throw new Error('Login mobile: resposta sem access_token.');
   _token = json.access_token;
   _tokenExpiry = Date.now() + 50 * 60 * 1000; // 50 min
   return _token;
