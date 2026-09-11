@@ -40,6 +40,19 @@ async function runMigrations() {
   // um UPDATE em massa não falha, ele simplesmente aplica de novo por
   // cima de dados que já estão corretos (foi exatamente isso que corrompeu
   // as batidas de relógio ao rodar a migration 035 duas vezes).
+  // O bootstrap (adotar migrations existentes sem reexecutar) só faz
+  // sentido na transição ÚNICA em que schema_migrations ainda não existia
+  // neste banco. Checar isso pela presença de QUALQUER tabela no schema
+  // (como antes) é um bug: schema_migrations continua existindo em todas
+  // as execuções seguintes, então "banco já tem tabela" é sempre verdade
+  // e uma migration nova genuína (ex.: a próxima depois desta) seria
+  // marcada como aplicada sem nunca ser executada de verdade.
+  const [schemaMigrationsRows] = await conn.query(
+    `SELECT COUNT(*) AS total FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations'`,
+    [DB_NAME],
+  );
+  const controleJaExistia = schemaMigrationsRows[0].total > 0;
+
   const [existingTables] = await conn.query(
     `SELECT COUNT(*) AS total FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?`,
     [DB_NAME],
@@ -53,7 +66,7 @@ async function runMigrations() {
      )`,
   );
 
-  if (bancoJaTinhaSchema) {
+  if (!controleJaExistia && bancoJaTinhaSchema) {
     // Banco pré-existente (ex.: produção) migrando de um runner sem
     // controle para este: o schema de todas as migrations atuais já está
     // aplicado, só faltava o registro. Marca todas como aplicadas SEM
