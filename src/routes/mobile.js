@@ -4,7 +4,8 @@ import { EmpresaRepository } from '../repositories/empresaRepository.js';
 import {
   syncFilial,
   syncFuncionario,
-  syncAllFuncionarios,
+  iniciarSyncAllFuncionarios,
+  getSyncJobStatus,
   pullMarcacoes,
   listarBloqueadas,
   desbloquearBloqueada,
@@ -81,11 +82,34 @@ export default async function mobileRoutes(fastify) {
     async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
       const filialId = request.body?.filial_id ?? null;
-      const result = await syncAllFuncionarios(request.empresaId, filialId);
-      const msg = `Sincronização concluída: ${result.sincronizados} funcionário(s).`;
-      return successResponse(result, msg);
+      const { jobId, jaEmAndamento } = iniciarSyncAllFuncionarios(request.empresaId, filialId);
+      return successResponse(
+        { job_id: jobId },
+        jaEmAndamento
+          ? 'Já existe uma sincronização em andamento para esta empresa.'
+          : 'Sincronização iniciada em segundo plano.',
+      );
     },
   );
+
+  // ── Status da sincronização em lote (polling) ────────────────────────────────
+
+  fastify.get('/mobile/sync/funcionarios/:jobId', async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
+    const job = getSyncJobStatus(request.params.jobId, request.empresaId);
+    if (!job) {
+      reply.code(404).send({ error: 'Sincronização não encontrada ou expirada.' });
+      return;
+    }
+    return successResponse({
+      status: job.status,
+      total: job.total,
+      processados: job.processados,
+      sincronizados: job.sincronizados,
+      erros: job.erros,
+      erro_geral: job.erroGeral,
+    });
+  });
 
   // ── Importar marcações ───────────────────────────────────────────────────────
 

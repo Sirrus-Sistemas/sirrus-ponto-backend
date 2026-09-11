@@ -236,7 +236,11 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
 
 // ── Sincronização em lote de funcionários ────────────────────────────────────
 
-export async function syncAllFuncionarios(empresaId, filialId = null) {
+/**
+ * @param {(progresso: { total?: number, processados?: number, sincronizados?: number, erros?: object[] }) => void} [onProgress]
+ *   Chamado a cada lote processado — usado por iniciarSyncAllFuncionarios para acompanhar o job em background.
+ */
+export async function syncAllFuncionarios(empresaId, filialId = null, onProgress = null) {
   let sql = 'SELECT id, filial_id, lotacao_id FROM funcionarios WHERE empresa_id = ? AND ativo = 1';
   const params = [empresaId];
   if (filialId) {
@@ -244,6 +248,7 @@ export async function syncAllFuncionarios(empresaId, filialId = null) {
     params.push(filialId);
   }
   const funcs = await query(sql, params);
+  onProgress?.({ total: funcs.length });
 
   // Pré-sincroniza filiais em paralelo
   const filialIds = [...new Set(funcs.map((f) => f.filial_id).filter(Boolean))];
@@ -281,9 +286,70 @@ export async function syncAllFuncionarios(empresaId, filialId = null) {
       if (resultados[j].status === 'fulfilled') sincronizados++;
       else erros.push({ funcionario_id: lote[j].id, error: resultados[j].reason?.message });
     }
+    onProgress?.({ processados: Math.min(i + CONCURRENCY, funcs.length), sincronizados, erros: [...erros] });
   }
 
   return { sincronizados, erros };
+}
+
+// ── Job em background da sincronização em lote ───────────────────────────────
+// syncAllFuncionarios pode demorar minutos (centenas de funcionários × chamadas
+// de rede pra API mobile externa) — rodar isso preso a uma requisição HTTP
+// estoura o proxy_read_timeout do nginx antes do Node terminar. Por isso o
+// endpoint só dispara o job aqui e retorna na hora; o front consulta o
+// progresso separadamente (getSyncJobStatus).
+const _syncJobs = new Map(); // jobId → { status, empresaId, total, processados, sincronizados, erros, erroGeral, iniciadoEm, finalizadoEm }
+const _JOB_TTL_MS = 60 * 60 * 1000; // limpa jobs concluídos há mais de 1h
+
+export function iniciarSyncAllFuncionarios(empresaId, filialId = null) {
+  for (const [id, job] of _syncJobs) {
+    if (job.empresaId === empresaId && job.status === 'em_andamento') {
+      return { jobId: id, jaEmAndamento: true };
+    }
+  }
+
+  const jobId = crypto.randomBytes(8).toString('hex');
+  const job = {
+    status: 'em_andamento',
+    empresaId,
+    total: 0,
+    processados: 0,
+    sincronizados: 0,
+    erros: [],
+    erroGeral: null,
+    iniciadoEm: Date.now(),
+    finalizadoEm: null,
+  };
+  _syncJobs.set(jobId, job);
+
+  syncAllFuncionarios(empresaId, filialId, (progresso) => Object.assign(job, progresso))
+    .then((resultado) => {
+      job.status = 'concluido';
+      job.sincronizados = resultado.sincronizados;
+      job.erros = resultado.erros;
+      job.processados = job.total;
+      job.finalizadoEm = Date.now();
+    })
+    .catch((err) => {
+      job.status = 'erro';
+      job.erroGeral = err.message;
+      job.finalizadoEm = Date.now();
+    });
+
+  return { jobId, jaEmAndamento: false };
+}
+
+export function getSyncJobStatus(jobId, empresaId) {
+  const job = _syncJobs.get(jobId);
+  if (!job || job.empresaId !== empresaId) return null;
+
+  if (job.finalizadoEm) {
+    for (const [id, j] of _syncJobs) {
+      if (j.finalizadoEm && Date.now() - j.finalizadoEm > _JOB_TTL_MS) _syncJobs.delete(id);
+    }
+  }
+
+  return job;
 }
 
 // ── Helpers: Detecção e bloqueio de duplicatas ────────────────────────────────
