@@ -173,7 +173,11 @@ export async function syncFilial(filialId) {
   if (mobileId) {
     await _request('PUT', `/admin/empresas/${mobileId}`, body);
   } else {
-    const res = await _request('POST', '/admin/empresas', body);
+    // A API mobile grava `ocultar_turnos` como NULL quando o campo não vem no
+    // payload (o INSERT do Laravel passa null explícito, o que sobrepõe o
+    // DEFAULT 'N' da coluna) — só manda isso na criação, nunca no PUT acima,
+    // pra não sobrescrever à força um valor alterado depois direto no mobile.
+    const res = await _request('POST', '/admin/empresas', { ...body, ocultar_turnos: 'N' });
     mobileId = res.id;
     await query('UPDATE filiais SET pontomobile_id = ? WHERE id = ?', [mobileId, filialId]);
   }
