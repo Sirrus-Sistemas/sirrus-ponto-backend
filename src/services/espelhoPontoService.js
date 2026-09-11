@@ -445,12 +445,16 @@ export const EspelhoPontoService = {
           )
         : Promise.resolve([]),
       funcionario?.lotacao_id
-        ? query('SELECT feriado_tipo, domingo_tipo, domingo_nao_previsto_tipo, dia_nao_previsto_tipo, hora_inicio_adicional_noturno, dividir_extras_50_100, calcula_pares_sequenciais_noturno FROM lotacoes WHERE id = ?', [funcionario.lotacao_id])
+        ? query('SELECT feriado_tipo, domingo_tipo, domingo_nao_previsto_tipo, dia_nao_previsto_tipo, hora_inicio_adicional_noturno, dividir_extras_50_100, calcula_pares_sequenciais_noturno, nao_calcular_extras_debito FROM lotacoes WHERE id = ?', [funcionario.lotacao_id])
         : Promise.resolve([]),
     ]);
     for (const r of thRows) turnoHorariosMap.set(Number(r.dia_semana), r);
     const lotacao = lotRows[0] || null;
     const hasTurnoHorarios = turnoHorariosMap.size > 0;
+    // Lotação configurada para nunca calcular hora extra nem débito/falta —
+    // vale tanto pro relatório quanto pra ficha de ponto, já que os dois
+    // consomem este mesmo cálculo.
+    const naoCalcularExtrasDebito = Number(lotacao?.nao_calcular_extras_debito) === 1;
 
     const usaEscala = Number(funcionario?.usa_escala) === 1;
 
@@ -632,7 +636,7 @@ export const EspelhoPontoService = {
           minutos_previstos = minutosPrevistoDia;
         }
         if (minutos_previstos != null) {
-          if (status === 'ocorrencia') {
+          if (status === 'ocorrencia' || naoCalcularExtrasDebito) {
             saldo_minutos = 0;
           } else {
             let raw = minutos - minutos_previstos;
@@ -681,7 +685,7 @@ export const EspelhoPontoService = {
       } else {
         minutos_referencia = minutosPrevistoDia ?? 0;
       }
-      let extras_100pct_minutos = calcExtras100pct({
+      let extras_100pct_minutos = naoCalcularExtrasDebito ? 0 : calcExtras100pct({
         feriado,
         dow,
         lotacao,
@@ -694,7 +698,7 @@ export const EspelhoPontoService = {
 
       // dividir_extras_50_100: when a regular-day shift crosses midnight into a 100%-day
       // (Sunday or holiday), split at midnight — after-midnight hours = 100%, before = 50%.
-      if (lotacao?.dividir_extras_50_100 && rawDedup.length >= 2) {
+      if (!naoCalcularExtrasDebito && lotacao?.dividir_extras_50_100 && rawDedup.length >= 2) {
         const minutosApos = minutosAposMeiaNoite(punchesParaCalculo, data, tzOffsetMs, calcularSemData);
         if (minutosApos > 0) {
           const nextDay = nextDateStr(data);
