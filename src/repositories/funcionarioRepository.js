@@ -112,7 +112,7 @@ export const FuncionarioRepository = {
               f.cargo, f.matricula, f.data_admissao, f.data_demissao, f.pis,
               f.cep, f.logradouro, f.numero, f.complemento, f.bairro, f.cidade, f.estado,
               f.municipio_id,
-              f.role, f.ativo, f.usa_escala, f.usa_mobile, f.pontomobile_id,
+              f.role, f.ativo, f.usa_escala, f.usa_mobile, f.admin_ponto_mobile, f.pontomobile_id,
               f.central_ativa, f.permitir_geo, f.permitir_foto, f.permitir_ajuste_ponto,
               f.created_at, f.updated_at,
               fi.nome AS filial_nome,
@@ -212,8 +212,8 @@ export const FuncionarioRepository = {
         nome, cpf, email, telefone, cargo, matricula,
         data_admissao, pis, senha_hash, senha_mobile, role,
         cep, logradouro, numero, complemento, bairro, cidade, estado, municipio_id,
-        usa_mobile)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        usa_mobile, admin_ponto_mobile)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.empresa_id, data.filial_id || null, data.departamento_id || null,
         data.turno_id || null, data.lotacao_id || null, data.gestor_id || null,
@@ -225,6 +225,7 @@ export const FuncionarioRepository = {
         data.complemento || null, data.bairro || null, data.cidade || null, data.estado || null,
         data.municipio_id || null,
         data.usa_mobile ?? 0,
+        data.admin_ponto_mobile ?? 0,
       ]
     );
     return result.insertId;
@@ -243,7 +244,7 @@ export const FuncionarioRepository = {
       'data_admissao', 'data_demissao', 'pis', 'role', 'ativo', 'usa_escala',
       'central_ativa', 'permitir_geo', 'permitir_foto', 'permitir_ajuste_ponto',
       'cep', 'logradouro', 'numero', 'complemento', 'bairro', 'cidade', 'estado', 'municipio_id',
-      'usa_mobile', 'senha_hash', 'senha_mobile',
+      'usa_mobile', 'admin_ponto_mobile', 'senha_hash', 'senha_mobile',
     ];
 
     for (const key of allowed) {

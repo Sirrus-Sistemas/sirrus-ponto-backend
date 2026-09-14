@@ -209,7 +209,7 @@ export async function syncLotacao(lotacaoId, mobileEmpresaId) {
 export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEmpresaId, mobileLotacaoId: cachedLotacaoId } = {}) {
   const [func] = await query(
     `SELECT f.id, f.nome, f.cpf, f.email, f.ativo, f.lotacao_id,
-            f.pontomobile_id, f.filial_id, f.senha_mobile
+            f.pontomobile_id, f.filial_id, f.senha_mobile, f.admin_ponto_mobile
        FROM funcionarios f WHERE f.id = ? LIMIT 1`,
     [funcionarioId],
   );
@@ -235,7 +235,7 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
     email: func.email || `${cpfClean}@pontomobile.local`,
     senha: senhaMobile,
     ativo: func.ativo === 1,
-    admin: 'N',
+    admin: func.admin_ponto_mobile === 1 ? 'S' : 'N',
     ...(mobileLotacaoId != null ? { lotacao_id: mobileLotacaoId } : {}),
   };
 
