@@ -28,6 +28,13 @@ async function runMigrations() {
     `CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
   );
 
+  // A conexão foi aberta sem database (comentário acima) e nunca troca de
+  // contexto — toda migration abaixo referencia tabelas sem qualificar com
+  // o nome do banco (ex.: `ALTER TABLE funcionarios`, não `\`ponto_web\`.funcionarios`),
+  // então sem este USE qualquer migration nova (ainda não coberta pelo
+  // bootstrap de schema_migrations) falha com "No database selected".
+  await conn.query(`USE \`${DB_NAME}\``);
+
   // Lê todos os arquivos .sql ordenados
   const files = readdirSync(__dirname)
     .filter((f) => f.endsWith('.sql'))
