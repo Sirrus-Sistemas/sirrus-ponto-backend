@@ -556,11 +556,14 @@ export const EspelhoPontoService = {
       let status;
       let ehDiaTrabalho = false;
 
-      if (isFuturo) {
-        status = 'futuro';
-      } else if (ocorrencia) {
+      if (ocorrencia) {
+        // Ocorrência lançada com antecedência (ex.: atestado de 15 dias entregue hoje,
+        // cobrindo dias futuros) vale mesmo pra dias ainda não vividos — do contrário
+        // ficava soterrada pelo status 'futuro' e nunca aparecia na ficha até o dia chegar.
         status = 'ocorrencia';
         ehDiaTrabalho = true;
+      } else if (isFuturo) {
+        status = 'futuro';
       } else if (feriado) {
         // Feriado: repouso remunerado pela CLT — ausência não é falta.
         // Se houver batidas, é 'presente' com 100% sobre tudo; sem batidas, é 'folga'.
