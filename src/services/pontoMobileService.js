@@ -758,7 +758,12 @@ export async function decidirMarcacoesMobile({ itens, status, adminFuncionarioId
 
   let processados = 0;
   const erros = [];
-  const CONCURRENCY = 5;
+  // Lotes grandes demoram o suficiente pra estourar o timeout do proxy
+  // (nginx) na frente do backend antes de terminar — o navegador mostra
+  // erro mesmo com o processamento terminando certinho do outro lado.
+  // Mais concorrência reduz o tempo total; ainda assim o nginx precisa de
+  // um proxy_read_timeout maior pra cobrir lotes bem grandes.
+  const CONCURRENCY = 10;
 
   for (let i = 0; i < itens.length; i += CONCURRENCY) {
     const lote = itens.slice(i, i + CONCURRENCY);
