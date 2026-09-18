@@ -4,6 +4,25 @@ import { query } from '../config/database.js';
 // Set APP_TZ_OFFSET env var to override if the company is in a different zone.
 const TZ_OFFSET_DEFAULT = process.env.APP_TZ_OFFSET || '-03:00';
 
+/**
+ * Hora de corte (0–5) pra decidir se uma batida de madrugada pertence ao dia
+ * anterior (plantão que atravessa a meia-noite) ou já é o início do turno de
+ * hoje. O padrão fixo de 5h cobre a maioria dos turnos (começam de manhã,
+ * tarde ou à noite, bem depois da madrugada) — só quando o turno do próprio
+ * funcionário começa perto ou antes desse horário (ex.: entrada às 05h) é
+ * que o corte precisa vir mais cedo, com 2h de folga pra chegada adiantada;
+ * senão a própria entrada do dia vira a última batida do dia anterior
+ * (relatado por cliente com turno de entrada 05:00, batendo ~04:50).
+ * Nunca sobe acima de 5h — turno que começa à tarde/noite continua com o
+ * corte padrão de sempre, preservando o comportamento pra plantão noturno.
+ */
+function corteDiaHoras(turnoEntrada) {
+  if (!turnoEntrada) return 5;
+  const horaEntrada = parseInt(String(turnoEntrada).slice(0, 2), 10);
+  if (!Number.isFinite(horaEntrada)) return 5;
+  return Math.min(5, Math.max(0, horaEntrada - 2));
+}
+
 export const MarcacaoRepository = {
   /**
    * Registra uma batida (horário do servidor em data_hora).
@@ -103,12 +122,14 @@ export const MarcacaoRepository = {
     return { inserida: false, marcacaoId: row?.id ?? null };
   },
 
-  async findByFuncionarioMonth(funcionarioId, year, month, tzOffset = TZ_OFFSET_DEFAULT) {
-    // DATE_SUB 5h shifts the window so 00:00–04:59 local belongs to the previous shift day.
-    // dia_referencia overrides this automatic grouping for overnight punches beyond 05:00.
+  async findByFuncionarioMonth(funcionarioId, year, month, tzOffset = TZ_OFFSET_DEFAULT, turnoEntrada = null) {
+    // DATE_SUB corteHoras shifts the window so madrugada local (antes do corte) belongs
+    // ao dia anterior — ver corteDiaHoras() pra como o corte é calculado por funcionário.
+    // dia_referencia overrides this automatic grouping for overnight punches beyond o corte.
     // Batidas REP são armazenadas no horário LOCAL do relógio (sem conversão UTC).
     // Para elas, data_hora_local = data_hora direto. Para os demais tipos (online,
     // geo, manual) o valor é UTC e precisa de CONVERT_TZ para o fuso da empresa.
+    const corteHoras = corteDiaHoras(turnoEntrada);
     return query(
       `SELECT id,
               data_hora,
@@ -126,8 +147,8 @@ export const MarcacaoRepository = {
               COALESCE(
                 DATE_FORMAT(dia_referencia, '%Y-%m-%d'),
                 DATE_FORMAT(
-                  CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL 5 HOUR)
-                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)
+                  CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL ? HOUR)
+                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL ? HOUR), '+00:00', ?)
                   END,
                   '%Y-%m-%d'
                 )
@@ -135,16 +156,23 @@ export const MarcacaoRepository = {
          FROM marcacoes
         WHERE funcionario_id = ?
           AND (
-            (YEAR(CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL 5 HOUR)
-                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)
+            (YEAR(CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL ? HOUR)
+                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL ? HOUR), '+00:00', ?)
                   END) = ?
-             AND MONTH(CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL 5 HOUR)
-                            ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)
+             AND MONTH(CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL ? HOUR)
+                            ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL ? HOUR), '+00:00', ?)
                        END) = ?)
             OR (dia_referencia IS NOT NULL AND YEAR(dia_referencia) = ? AND MONTH(dia_referencia) = ?)
           )
         ORDER BY data_hora ASC`,
-      [tzOffset, tzOffset, funcionarioId, tzOffset, year, tzOffset, month, year, month],
+      [
+        tzOffset,
+        corteHoras, corteHoras, tzOffset,
+        funcionarioId,
+        corteHoras, corteHoras, tzOffset, year,
+        corteHoras, corteHoras, tzOffset, month,
+        year, month,
+      ],
     );
   },
 
@@ -153,7 +181,8 @@ export const MarcacaoRepository = {
    * agrupamento por dia_referencia/corte de 5h de findByFuncionarioMonth, mas
    * parametrizada por data início/fim em vez de ano/mês).
    */
-  async findByFuncionarioPeriodo(funcionarioId, dataInicio, dataFim, tzOffset = TZ_OFFSET_DEFAULT) {
+  async findByFuncionarioPeriodo(funcionarioId, dataInicio, dataFim, tzOffset = TZ_OFFSET_DEFAULT, turnoEntrada = null) {
+    const corteHoras = corteDiaHoras(turnoEntrada);
     return query(
       `SELECT id,
               data_hora,
@@ -168,8 +197,8 @@ export const MarcacaoRepository = {
               COALESCE(
                 DATE_FORMAT(dia_referencia, '%Y-%m-%d'),
                 DATE_FORMAT(
-                  CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL 5 HOUR)
-                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)
+                  CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL ? HOUR)
+                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL ? HOUR), '+00:00', ?)
                   END,
                   '%Y-%m-%d'
                 )
@@ -177,13 +206,19 @@ export const MarcacaoRepository = {
          FROM marcacoes
         WHERE funcionario_id = ?
           AND (
-            (DATE(CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL 5 HOUR)
-                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL 5 HOUR), '+00:00', ?)
+            (DATE(CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL ? HOUR)
+                       ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL ? HOUR), '+00:00', ?)
                   END) BETWEEN ? AND ?)
             OR (dia_referencia IS NOT NULL AND dia_referencia BETWEEN ? AND ?)
           )
         ORDER BY data_hora ASC`,
-      [tzOffset, tzOffset, funcionarioId, tzOffset, dataInicio, dataFim, dataInicio, dataFim],
+      [
+        tzOffset,
+        corteHoras, corteHoras, tzOffset,
+        funcionarioId,
+        corteHoras, corteHoras, tzOffset, dataInicio, dataFim,
+        dataInicio, dataFim,
+      ],
     );
   },
 };

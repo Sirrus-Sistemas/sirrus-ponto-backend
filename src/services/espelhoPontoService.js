@@ -419,7 +419,7 @@ export const EspelhoPontoService = {
     const tzOffsetMs = parseTzOffsetMs(tzOffset);
 
     const [rows, feriadosRows, turnoRow, ocorrencias, diasBloqRows] = await Promise.all([
-      MarcacaoRepository.findByFuncionarioMonth(funcionarioId, year, month, tzOffset),
+      MarcacaoRepository.findByFuncionarioMonth(funcionarioId, year, month, tzOffset, funcionario?.turno_entrada),
       FeriadoRepository.listByEmpresaMonth(empresaId, year, month),
       FuncionarioRepository.findTurnoJornada(funcionarioId),
       OcorrenciaRepository.findByFuncionarioMonth(funcionarioId, year, month),
@@ -617,12 +617,19 @@ export const EspelhoPontoService = {
       else if (status === 'folga') diasFolga += 1;
       else if (status === 'ocorrencia') diasOcorrencia += 1;
 
+      // Ocorrência sem nenhuma batida real: ela sozinha define a jornada do
+      // dia (ex.: atestado do dia inteiro). Ocorrência lançada num dia que
+      // também tem batidas reais é tratada mais abaixo como complemento
+      // (crédito) ou redução (débito) do que foi trabalhado — não substitui
+      // a jornada esperada do dia inteiro.
+      const ocorrenciaSemBatidas = status === 'ocorrencia' && marcacoes.length === 0;
+
       let minutos_previstos = null;
       let saldo_minutos = null;
       if (ehDiaTrabalho) {
-        // For occurrence days, respect quantidade_horas when specified;
+        // For occurrence-only days, respect quantidade_horas when specified;
         // otherwise fall back to turno's carga for 'integral', or full day for other periods.
-        if (status === 'ocorrencia' && ocorrencia?.quantidade_horas != null) {
+        if (ocorrenciaSemBatidas && ocorrencia?.quantidade_horas != null) {
           minutos_previstos = Math.round(Number(ocorrencia.quantidade_horas) * 60);
         } else if (usaEscala && escalaEntry && escalaEntry.tipo === 'trabalho') {
           // Use the scheduled time pairs; fall back to turno when escala has no times
@@ -639,10 +646,22 @@ export const EspelhoPontoService = {
           minutos_previstos = minutosPrevistoDia;
         }
         if (minutos_previstos != null) {
-          if (status === 'ocorrencia' || naoCalcularExtrasDebito) {
+          if (ocorrenciaSemBatidas || naoCalcularExtrasDebito) {
             saldo_minutos = 0;
           } else {
-            let raw = minutos - minutos_previstos;
+            // Ocorrência num dia com batidas reais: soma (crédito) ou subtrai
+            // (débito, conforme tipos_ocorrencia.tipo_lancamento) do que foi
+            // efetivamente trabalhado, e o resultado é comparado contra a
+            // jornada normal do dia — a ocorrência complementa/reduz o
+            // trabalhado, não substitui nem zera a jornada esperada.
+            let minutosEfetivos = minutos;
+            if (status === 'ocorrencia' && ocorrencia?.quantidade_horas != null) {
+              const ocorrenciaMin = Math.round(Number(ocorrencia.quantidade_horas) * 60);
+              minutosEfetivos = ocorrencia.tipo_lancamento === 'debito'
+                ? minutos - ocorrenciaMin
+                : minutos + ocorrenciaMin;
+            }
+            let raw = minutosEfetivos - minutos_previstos;
             // Zero out saldo when within configured tolerance
             if (raw < 0 && Math.abs(raw) <= toleranciaAtraso) raw = 0;
             if (raw > 0 && raw <= toleranciaExtra) raw = 0;
@@ -652,25 +671,22 @@ export const EspelhoPontoService = {
         }
       }
 
-      // Quando o turno tem tabela por dia da semana (turno_horarios), a contagem
-      // específica do dia tem prioridade sobre o padrão fixo do turno — senão um
-      // sábado de meio período (2 batidas: entrada+saída, sem intervalo) sempre
-      // ficaria "Inconsistente" por esperar o mesmo número fixo (ex.: 4) de todo
-      // dia, ignorando a variação que a própria turno_horarios existe pra descrever.
-      // O valor fixo do turno só entra como fallback quando o dia não tem
-      // configuração própria (ex.: batidasEsperadasDoDia retorna null em folga).
+      // Só usado como informação exibida (campo `batidas_esperadas` do dia) —
+      // não entra mais no cálculo de "incompleto" (ver abaixo). Quando o turno
+      // tem tabela por dia da semana (turno_horarios), a contagem específica
+      // do dia tem prioridade sobre o padrão fixo do turno; este só entra como
+      // fallback quando o dia não tem configuração própria (ex.:
+      // batidasEsperadasDoDia retorna null em folga).
       const batidasEsperadasHoje = hasTurnoHorarios
         ? (batidasEsperadasDoDia(turnoHorariosMap.get(dow)) ?? batidasEsperadasDia)
         : batidasEsperadasDia;
 
-      // incompleto: derive from modifiers (set in cascade above) + cicloBatidas check
-      const cicloBatidasIncompleto =
-        batidasEsperadasHoje != null &&
-        ehDiaTrabalho &&
-        marcacoes.length > 0 &&
-        marcacoes.length % batidasEsperadasHoje !== 0;
-
-      if ((intervaloAberto || cicloBatidasIncompleto) && ehDiaTrabalho && marcacoes.length > 0) {
+      // incompleto: só por batida sem par (número ímpar) — não compara contra
+      // batidas_esperadas_dia nenhum. O funcionário pode bater menos ou mais
+      // batidas que o parametrizado sem gerar inconsistência; só fica
+      // inconsistente quando falta o par de alguma batida (entrada sem saída
+      // correspondente, por exemplo), deixando a contagem do dia ímpar.
+      if (intervaloAberto && ehDiaTrabalho && marcacoes.length > 0) {
         if (!modifiers.includes('incompleto')) modifiers.push('incompleto');
       }
       const incompleto = modifiers.includes('incompleto');

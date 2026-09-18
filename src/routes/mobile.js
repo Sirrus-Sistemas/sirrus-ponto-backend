@@ -12,6 +12,7 @@ import {
   isMobileConfigured,
   listarPendentesAprovacao,
   decidirMarcacoesMobile,
+  listarConflitosPontomobileId,
 } from '../services/pontoMobileService.js';
 import { auditar } from '../services/auditService.js';
 
@@ -42,6 +43,14 @@ export default async function mobileRoutes(fastify) {
   fastify.get('/mobile/filiais', async (request) => {
     const filiais = await EmpresaRepository.findFiliaisByEmpresa(request.empresaId);
     return successResponse(filiais);
+  });
+
+  // ── Conflitos de pontomobile_id (dois funcionários com a mesma chave no mobile) ──
+
+  fastify.get('/mobile/conflitos-pontomobile-id', async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
+    const conflitos = await listarConflitosPontomobileId(request.empresaId);
+    return successResponse(conflitos);
   });
 
   // ── Sincronizar filial ───────────────────────────────────────────────────────

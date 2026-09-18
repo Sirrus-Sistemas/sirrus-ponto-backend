@@ -58,7 +58,13 @@ async function _request(method, path, body = null, retries = 3) {
   const json = _parseJsonSafe(text);
   if (!res.ok) {
     const detalhe = json?.message ?? (text ? text.slice(0, 300) : res.statusText || `HTTP ${res.status}`);
-    throw new Error(`Mobile API ${res.status}: ${detalhe}`);
+    // Erros de validação (422) do Laravel trazem um `errors` por campo além da
+    // mensagem genérica ("The given data was invalid.") — sem isso não dá pra
+    // saber qual campo/motivo real sem adivinhar.
+    const camposInvalidos = json?.errors
+      ? Object.entries(json.errors).map(([campo, msgs]) => `${campo}: ${[].concat(msgs).join('; ')}`).join(' | ')
+      : null;
+    throw new Error(`Mobile API ${res.status}: ${detalhe}${camposInvalidos ? ` (${camposInvalidos})` : ''}`);
   }
   return json ?? {};
 }
@@ -150,6 +156,24 @@ function marcacaoAtToUtc(marcacaoAt, fuso) {
   return new Date(localMs - fusoMs).toISOString().replace('T', ' ').slice(0, 19);
 }
 
+/**
+ * Procura, na API mobile, a empresa já cadastrada com este CNPJ — usado
+ * quando criar uma nova dá "CNPJ já está cadastrado" (o vínculo local
+ * pontomobile_id se perdeu, mas o registro do lado de lá continua existindo).
+ * A API não filtra por CNPJ via query string, então pagina a listagem
+ * inteira comparando no cliente (só roda nesse caso raro de link perdido).
+ */
+async function _buscarEmpresaPorCnpj(cnpjDigits) {
+  let path = '/admin/empresas';
+  while (path) {
+    const res = await _request('GET', path);
+    const achada = (res.data || []).find((e) => String(e.cnpj || '').replace(/\D/g, '') === cnpjDigits);
+    if (achada) return achada;
+    path = res.next_page_url ? res.next_page_url.replace(`${BASE_URL}/api/v1`, '') : null;
+  }
+  return null;
+}
+
 // ── Sincronização de Filial (= "empresa" no mobile) ──────────────────────────
 
 export async function syncFilial(filialId) {
@@ -173,12 +197,22 @@ export async function syncFilial(filialId) {
   if (mobileId) {
     await _request('PUT', `/admin/empresas/${mobileId}`, body);
   } else {
-    // A API mobile grava `ocultar_turnos` como NULL quando o campo não vem no
-    // payload (o INSERT do Laravel passa null explícito, o que sobrepõe o
-    // DEFAULT 'N' da coluna) — só manda isso na criação, nunca no PUT acima,
-    // pra não sobrescrever à força um valor alterado depois direto no mobile.
-    const res = await _request('POST', '/admin/empresas', { ...body, ocultar_turnos: 'N' });
-    mobileId = res.id;
+    try {
+      // A API mobile grava `ocultar_turnos` como NULL quando o campo não vem no
+      // payload (o INSERT do Laravel passa null explícito, o que sobrepõe o
+      // DEFAULT 'N' da coluna) — só manda isso na criação, nunca no PUT acima,
+      // pra não sobrescrever à força um valor alterado depois direto no mobile.
+      const res = await _request('POST', '/admin/empresas', { ...body, ocultar_turnos: 'N' });
+      mobileId = res.id;
+    } catch (e) {
+      // "CNPJ já está cadastrado": o vínculo local (pontomobile_id) se perdeu,
+      // mas a empresa já existe do lado do mobile — acha pelo CNPJ e reaproveita
+      // o id, em vez de falhar exigindo correção manual no banco.
+      if (!/cnpj.*cadastrado/i.test(e.message)) throw e;
+      const existente = await _buscarEmpresaPorCnpj(body.cnpj);
+      if (!existente) throw e;
+      mobileId = existente.id;
+    }
     await query('UPDATE filiais SET pontomobile_id = ? WHERE id = ?', [mobileId, filialId]);
   }
   return mobileId;
@@ -258,6 +292,25 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
       // Atualiza dados no mobile agora que temos o ID
       await _request('PUT', `/admin/users_funcionarios/new/${mobileId}`, body);
     }
+
+    // pontomobile_id é a chave do funcionário no banco do Ponto Mobile — dois
+    // funcionários locais vinculados ao mesmo id fazem o sistema misturar as
+    // batidas de pessoas diferentes (uma vira "dona" do id dependendo da
+    // ordem de leitura, sem garantia nenhuma — foi exatamente isso que
+    // aconteceu com CPFs duplicados/parecidos resolvidos via login por CPF
+    // acima). Trava aqui em vez de vincular silenciosamente.
+    const [conflito] = await query(
+      'SELECT id, nome FROM funcionarios WHERE pontomobile_id = ? AND id != ? AND ativo = 1 LIMIT 1',
+      [mobileId, funcionarioId],
+    );
+    if (conflito) {
+      throw new Error(
+        `Este funcionário já está vinculado no mobile ao mesmo cadastro de "${conflito.nome}" ` +
+        `(id ${conflito.id}, pontomobile_id ${mobileId}). Confira CPF duplicado ou cadastro repetido ` +
+        `antes de sincronizar — as batidas dos dois ficariam misturadas.`,
+      );
+    }
+
     await query('UPDATE funcionarios SET pontomobile_id = ? WHERE id = ?', [mobileId, funcionarioId]);
   }
   return mobileId;
@@ -517,6 +570,7 @@ async function _buscarEMapear(filialId, dataInicio, dataFim, lotacaoId = null, f
   // Mapa mobileFuncionarioId → { id, nome, fusoHorario } (filtra por filial, lotação e/ou funcionário específico)
   const mobileIds = [...new Set(items.map((i) => Number(i.funcionario_id)).filter(Boolean))];
   const funcMap = new Map();
+  const conflitos = [];
   if (mobileIds.length) {
     const placeholders = mobileIds.map(() => '?').join(',');
     const conditions = [
@@ -538,14 +592,67 @@ async function _buscarEMapear(filialId, dataInicio, dataFim, lotacaoId = null, f
         WHERE ${conditions}`,
       params,
     );
-    for (const f of funcs) funcMap.set(Number(f.pontomobile_id), { id: f.id, nome: f.nome, fusoHorario: f.fuso_horario });
+    // pontomobile_id deveria ser único (é a chave do funcionário no banco do
+    // Ponto Mobile), mas dados antigos podem ter dois funcionários locais
+    // apontando pro mesmo id (ver guarda em syncFuncionario, que impede isso
+    // dali em diante). Preencher o Map às cegas faria o segundo sobrescrever
+    // o primeiro, misturando as batidas de duas pessoas diferentes — em vez
+    // disso, nenhum dos dois entra no mapa (fica pendente/ignorado) e o
+    // conflito é reportado pra aparecer na tela de sincronização.
+    const porPontomobileId = new Map();
+    for (const f of funcs) {
+      const pmId = Number(f.pontomobile_id);
+      const lista = porPontomobileId.get(pmId) ?? [];
+      lista.push(f);
+      porPontomobileId.set(pmId, lista);
+    }
+    for (const [pmId, lista] of porPontomobileId) {
+      if (lista.length > 1) {
+        conflitos.push({
+          pontomobile_id: pmId,
+          funcionarios: lista.map((f) => ({ id: f.id, nome: f.nome })),
+        });
+        continue;
+      }
+      const f = lista[0];
+      funcMap.set(pmId, { id: f.id, nome: f.nome, fusoHorario: f.fuso_horario });
+    }
   }
 
-  return { fil, items, funcMap };
+  return { fil, items, funcMap, conflitos };
+}
+
+/**
+ * Funcionários ativos da empresa que compartilham o mesmo pontomobile_id —
+ * a chave do funcionário no banco do Ponto Mobile, que nunca deveria se
+ * repetir. Usado pela tela de sincronização pra alertar e permitir corrigir
+ * antes que mais batidas sejam importadas pro cadastro errado.
+ */
+export async function listarConflitosPontomobileId(empresaId) {
+  const rows = await query(
+    `SELECT f.id, f.nome, f.cpf, f.pontomobile_id
+       FROM funcionarios f
+      WHERE f.empresa_id = ? AND f.ativo = 1 AND f.pontomobile_id IS NOT NULL
+        AND f.pontomobile_id IN (
+          SELECT pontomobile_id FROM funcionarios
+           WHERE empresa_id = ? AND ativo = 1 AND pontomobile_id IS NOT NULL
+           GROUP BY pontomobile_id HAVING COUNT(*) > 1
+        )
+      ORDER BY f.pontomobile_id, f.nome`,
+    [empresaId, empresaId],
+  );
+
+  const porId = new Map();
+  for (const r of rows) {
+    const lista = porId.get(r.pontomobile_id) ?? [];
+    lista.push({ id: r.id, nome: r.nome, cpf: r.cpf });
+    porId.set(r.pontomobile_id, lista);
+  }
+  return [...porId.entries()].map(([pontomobile_id, funcionarios]) => ({ pontomobile_id, funcionarios }));
 }
 
 export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = null, funcionarioId = null) {
-  const { fil, items, funcMap } = await _buscarEMapear(filialId, dataInicio, dataFim, lotacaoId, funcionarioId);
+  const { fil, items, funcMap, conflitos } = await _buscarEMapear(filialId, dataInicio, dataFim, lotacaoId, funcionarioId);
   const empresa = await query('SELECT aprovacao_mobile_ativa FROM empresas WHERE id = ?', [fil.empresa_id]);
   const aprovacaoAtiva = Number(empresa[0]?.aprovacao_mobile_ativa) === 1;
 
@@ -651,7 +758,7 @@ export async function pullMarcacoes(filialId, dataInicio, dataFim, lotacaoId = n
     console.error(`[pullMarcacoes] ${erros.length} erro(s). Primeiro:`, erros[0]);
   }
 
-  return { importados, ignorados, bloqueados: bloqueados_count, duplicatas_bloqueadas, erros };
+  return { importados, ignorados, bloqueados: bloqueados_count, duplicatas_bloqueadas, erros, conflitos_pontomobile_id: conflitos };
 }
 
 /**

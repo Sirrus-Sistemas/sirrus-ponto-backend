@@ -117,7 +117,7 @@ export default async function marcacaoRoutes(fastify) {
     const dataFim = `${ano}-${String(mes).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`;
 
     const [rows, diasBloq] = await Promise.all([
-      MarcacaoRepository.findByFuncionarioMonth(funcionarioId, ano, mes, tzOffset),
+      MarcacaoRepository.findByFuncionarioMonth(funcionarioId, ano, mes, tzOffset, func?.turno_entrada),
       query(
         `SELECT DATE_FORMAT(data, '%Y-%m-%d') AS data
            FROM marcacoes_dia_bloqueado
