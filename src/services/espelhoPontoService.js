@@ -713,7 +713,12 @@ export const EspelhoPontoService = {
         minutos_previstos: minutos_referencia,
         diaPrevisto,
       });
-      let extras_50pct_minutos = 0;
+      // Caso geral: saldo positivo do dia é hora extra 50% (mesmo fallback que o
+      // relatório impresso já usava por dia — aqui só alimenta o total do
+      // resumo, que ficava sempre em 00:00 por nunca ter essa atribuição).
+      let extras_50pct_minutos = (!naoCalcularExtrasDebito && saldo_minutos != null && saldo_minutos > 0)
+        ? saldo_minutos
+        : 0;
 
       // dividir_extras_50_100: when a regular-day shift crosses midnight into a 100%-day
       // (Sunday or holiday), split at midnight — after-midnight hours = 100%, before = 50%.
