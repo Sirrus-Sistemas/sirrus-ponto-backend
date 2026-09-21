@@ -626,6 +626,12 @@ export const EspelhoPontoService = {
 
       let minutos_previstos = null;
       let saldo_minutos = null;
+      // Total "oficial" do dia pra exibição — igual às batidas quando não há
+      // ocorrência de crédito/débito; ajustado por ela quando há (ver abaixo).
+      // Sem isso, o relatório mostrava só o cru das batidas (ex.: 07:48) mesmo
+      // quando uma ocorrência de +00:11 já tinha sido somada no saldo/débito,
+      // dando a impressão de que a ocorrência não fez nada.
+      let minutos_trabalhados_ajustado = minutos;
       if (ehDiaTrabalho) {
         // For occurrence-only days, respect quantidade_horas when specified;
         // otherwise fall back to turno's carga for 'integral', or full day for other periods.
@@ -661,6 +667,7 @@ export const EspelhoPontoService = {
                 ? minutos - ocorrenciaMin
                 : minutos + ocorrenciaMin;
             }
+            minutos_trabalhados_ajustado = minutosEfetivos;
             let raw = minutosEfetivos - minutos_previstos;
             // Zero out saldo when within configured tolerance
             if (raw < 0 && Math.abs(raw) <= toleranciaAtraso) raw = 0;
@@ -807,6 +814,7 @@ export const EspelhoPontoService = {
         marcacoes,
         batidas_esperadas: batidasEsperadasHoje ?? null,
         minutos_trabalhados: minutos,
+        minutos_trabalhados_ajustado,
         minutos_previstos,
         saldo_minutos,
         extras_100pct_minutos,
