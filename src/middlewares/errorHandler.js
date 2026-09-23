@@ -37,8 +37,14 @@ export function errorHandler(error, request, reply) {
 
   // Erro genérico
   request.log.error(error, 'Unhandled error');
-  reply.code(statusCode || 500).send({
+  const status = statusCode || 500;
+  // 4xx é sempre uma mensagem que o próprio código escreveu de propósito pra
+  // explicar algo ao usuário (CPF/senha inválidos, mês já fechado, etc.) —
+  // nunca vaza detalhe interno, então não tem por que esconder em produção.
+  // Só 5xx (falha inesperada de verdade) continua escondido fora de dev.
+  const mensagemSegura = status < 500 || process.env.NODE_ENV === 'development';
+  reply.code(status).send({
     error: 'Erro interno',
-    message: process.env.NODE_ENV === 'development' ? message : 'Erro interno do servidor',
+    message: mensagemSegura ? message : 'Erro interno do servidor',
   });
 }

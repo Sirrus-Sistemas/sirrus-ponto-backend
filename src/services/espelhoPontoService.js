@@ -670,8 +670,19 @@ export const EspelhoPontoService = {
           minutos_previstos = minutosPrevistoDia;
         }
         if (minutos_previstos != null) {
-          if (ocorrenciaSemBatidas || naoCalcularExtrasDebito) {
+          if (naoCalcularExtrasDebito) {
             saldo_minutos = 0;
+          } else if (ocorrenciaSemBatidas) {
+            // Ocorrência de débito sem nenhuma batida (ex.: folga compensativa
+            // que ainda não foi de fato compensada) vale como falta — deve o
+            // dia inteiro. Crédito (atestado, férias etc.) cobre a jornada
+            // esperada sem gerar débito nem sobra.
+            if (ocorrencia?.tipo_lancamento === 'debito') {
+              saldo_minutos = -minutos_previstos;
+              saldoMes += saldo_minutos;
+            } else {
+              saldo_minutos = 0;
+            }
           } else {
             // Ocorrência num dia com batidas reais: soma (crédito) ou subtrai
             // (débito, conforme tipos_ocorrencia.tipo_lancamento) do que foi

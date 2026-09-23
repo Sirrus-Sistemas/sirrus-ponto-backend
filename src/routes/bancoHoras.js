@@ -153,10 +153,12 @@ export default async function bancoHorasRoutes(fastify) {
     return reply.code(201).send(successResponse(resultado, 'Lançamento gravado no banco de horas'));
   });
 
-  // ─── DELETE /banco-horas/:id — exclui um lançamento manual ─────────────────
-  // Fechamentos automáticos (origem = fechamento_mensal) não podem ser
-  // excluídos por aqui — são o registro histórico do que a ficha calculou
-  // naquele mês; se precisar corrigir, lança um ajuste manual novo.
+  // ─── DELETE /banco-horas/:id — exclui um lançamento (manual ou fechamento) ──
+  // Excluir um fechamento_mensal reabre aquele mês/tipo de hora pra ser
+  // fechado de novo (tiposJaFechados deixa de encontrá-lo) — é assim que se
+  // corrige um fechamento feito com a ficha ainda incompleta. Fica registrado
+  // por inteiro em audit_log (quem excluiu, quando, e o lançamento inteiro
+  // que existia antes), já que apagar um fechamento reescreve histórico.
   fastify.delete('/banco-horas/:id', {
     preHandler: [authorize('admin', 'gestor')],
   }, async (request, reply) => {
@@ -165,12 +167,6 @@ export default async function bancoHorasRoutes(fastify) {
     const linha = await BancoHorasRepository.buscarPorId(id);
     if (!linha || linha.empresa_id !== request.empresaId) {
       return reply.code(404).send({ error: 'Lançamento não encontrado' });
-    }
-    if (linha.origem !== 'manual') {
-      return reply.code(400).send({
-        error: 'Não é possível excluir',
-        message: 'Só é possível excluir lançamentos manuais — fechamentos automáticos da ficha de ponto não podem ser removidos por aqui.',
-      });
     }
 
     const excluida = await BancoHorasRepository.excluir(id);
