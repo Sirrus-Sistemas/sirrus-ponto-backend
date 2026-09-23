@@ -377,29 +377,47 @@ function resolverIgual(tipo, lotacao) {
   return tipo;
 }
 
+/**
+ * Minutos de excedente elegíveis a bônus, conforme o tipo configurado —
+ * SEMPRE em minutos crus (a taxa de 1,5x/2x é aplicada depois, na folha,
+ * igual ao resto do sistema já faz pra hora extra de dia normal). '50pct'
+ * antes vinha dividido por 2 aqui — ficava consistente só quando (por engano)
+ * caía direto no bucket de 100%, mas é a mesma unidade "minutos crus" que
+ * extras_50pct_minutos usa em todo o resto do arquivo.
+ */
 function aplicarTipo(tipo, minutos_trabalhados, minutos_previstos) {
   switch (tipo) {
     case 'nao_calcular': return 0;
-    case '50pct':        return Math.floor(Math.max(0, minutos_trabalhados - (minutos_previstos || 0)) * 0.5);
+    case '50pct':        return Math.max(0, minutos_trabalhados - (minutos_previstos || 0));
     case '100pct_extra': return Math.max(0, minutos_trabalhados - (minutos_previstos || 0));
     case '100pct_total': return minutos_trabalhados;
     default:             return 0;
   }
 }
 
-function calcExtras100pct({ feriado, dow, lotacao, marcacoes, minutos_trabalhados, minutos_previstos, diaPrevisto }) {
-  if (!lotacao || marcacoes.length === 0) return 0;
-  if (feriado) return aplicarTipo(lotacao.feriado_tipo, minutos_trabalhados, minutos_previstos);
-  if (dow === 0) {
-    const tipo = diaPrevisto
+/**
+ * Resolve o tipo de tratamento (feriado > domingo > dia não previsto) e os
+ * minutos de bônus daquele dia. Devolve o `tipo` junto pra quem chama decidir
+ * em qual bucket (50% ou 100%) o valor entra — antes isso sempre ia pro
+ * bucket de 100%, mesmo quando o tipo configurado era '50pct'.
+ */
+function calcExtrasDiaEspecial({ feriado, dow, lotacao, marcacoes, minutos_trabalhados, minutos_previstos, diaPrevisto }) {
+  if (!lotacao || marcacoes.length === 0) return { tipo: 'nao_calcular', minutos: 0 };
+
+  let tipo;
+  if (feriado) {
+    tipo = lotacao.feriado_tipo;
+  } else if (dow === 0) {
+    tipo = diaPrevisto
       ? lotacao.domingo_tipo
       : resolverIgual(lotacao.domingo_nao_previsto_tipo, lotacao);
-    return aplicarTipo(tipo, minutos_trabalhados, minutos_previstos);
+  } else if (!diaPrevisto) {
+    tipo = resolverIgual(lotacao.dia_nao_previsto_tipo, lotacao);
+  } else {
+    return { tipo: 'nao_calcular', minutos: 0 };
   }
-  if (!diaPrevisto) {
-    return aplicarTipo(resolverIgual(lotacao.dia_nao_previsto_tipo, lotacao), minutos_trabalhados, minutos_previstos);
-  }
-  return 0;
+
+  return { tipo, minutos: aplicarTipo(tipo, minutos_trabalhados, minutos_previstos) };
 }
 
 export const EspelhoPontoService = {
@@ -740,15 +758,28 @@ export const EspelhoPontoService = {
       } else {
         minutos_referencia = minutosPrevistoDia ?? 0;
       }
-      let extras_100pct_minutos = naoCalcularExtrasDebito ? 0 : calcExtras100pct({
-        feriado,
-        dow,
-        lotacao,
-        marcacoes,
-        minutos_trabalhados: minutos,
-        minutos_previstos: minutos_referencia,
-        diaPrevisto,
-      });
+      let extras_100pct_minutos = 0;
+      if (!naoCalcularExtrasDebito) {
+        const especial = calcExtrasDiaEspecial({
+          feriado,
+          dow,
+          lotacao,
+          marcacoes,
+          minutos_trabalhados: minutos,
+          minutos_previstos: minutos_referencia,
+          diaPrevisto,
+        });
+        if (especial.tipo === '50pct') {
+          // Feriado/domingo/dia não previsto trabalhado com regra de 50%: soma no
+          // mesmo saldo_minutos que um dia normal usaria, pra Total/Débito da
+          // ficha e o saldo do mês contarem certo — sem isso ficava só no
+          // resumo, sem aparecer em lugar nenhum da ficha em si.
+          saldo_minutos = (saldo_minutos ?? 0) + especial.minutos;
+          saldoMes += especial.minutos;
+        } else {
+          extras_100pct_minutos = especial.minutos;
+        }
+      }
       // Caso geral: saldo positivo do dia é hora extra 50% (mesmo fallback que o
       // relatório impresso já usava por dia — aqui só alimenta o total do
       // resumo, que ficava sempre em 00:00 por nunca ter essa atribuição).

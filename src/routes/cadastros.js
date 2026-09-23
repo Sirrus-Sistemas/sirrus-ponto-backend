@@ -411,6 +411,8 @@ export default async function cadastrosRoutes(fastify) {
           calcular_extras_escalonado: { type: 'integer', minimum: 0, maximum: 1 },
           domingo_tipo: { type: 'string', enum: ['nao_calcular', '50pct', '100pct_extra', '100pct_total'] },
           feriado_tipo: { type: 'string', enum: ['nao_calcular', '50pct', '100pct_extra', '100pct_total'] },
+          domingo_nao_previsto_tipo: { type: 'string', enum: ['nao_calcular', '50pct', '100pct_total', 'igual_feriado'] },
+          dia_nao_previsto_tipo: { type: 'string', enum: ['nao_calcular', '50pct', '100pct_total', 'igual_domingo'] },
           somar_esq_horas_trabalhadas: { type: 'integer', minimum: 0, maximum: 1 },
           converter_falta_banco_horas: { type: 'integer', minimum: 0, maximum: 1 },
           lancar_100pct_banco_horas: { type: 'integer', minimum: 0, maximum: 1 },
@@ -436,7 +438,7 @@ export default async function cadastrosRoutes(fastify) {
     const result = await query(
       `INSERT INTO lotacoes
        (empresa_id, nome, tipo_extra, calcular_extras_escalonado,
-        domingo_tipo, feriado_tipo,
+        domingo_tipo, feriado_tipo, domingo_nao_previsto_tipo, dia_nao_previsto_tipo,
         somar_esq_horas_trabalhadas, converter_falta_banco_horas, lancar_100pct_banco_horas,
         converter_falta_folha_ponto, nao_gerar_debitos_meia_falta, banco_horas_somente_dom_feriado,
         dividir_extras_50_100, calcular_60pct_sabados, sabado_somente_extras,
@@ -444,7 +446,7 @@ export default async function cadastrosRoutes(fastify) {
         lancar_debitos_domingo_50pct, tabela_zerada_e_folga,
         calcula_pares_sequenciais_noturno, nao_calcular_extras_debito,
         hora_inicio_100pct, hora_inicio_adicional_noturno)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         request.empresaId,
         d.nome,
@@ -452,6 +454,8 @@ export default async function cadastrosRoutes(fastify) {
         d.calcular_extras_escalonado ?? 0,
         d.domingo_tipo ?? '100pct_extra',
         d.feriado_tipo ?? '100pct_total',
+        d.domingo_nao_previsto_tipo ?? '100pct_total',
+        d.dia_nao_previsto_tipo ?? 'nao_calcular',
         d.somar_esq_horas_trabalhadas ?? 0,
         d.converter_falta_banco_horas ?? 0,
         d.lancar_100pct_banco_horas ?? 0,
@@ -480,7 +484,7 @@ export default async function cadastrosRoutes(fastify) {
     const d = request.body;
     const allowed = [
       'nome', 'tipo_extra', 'calcular_extras_escalonado',
-      'domingo_tipo', 'feriado_tipo',
+      'domingo_tipo', 'feriado_tipo', 'domingo_nao_previsto_tipo', 'dia_nao_previsto_tipo',
       'somar_esq_horas_trabalhadas', 'converter_falta_banco_horas', 'lancar_100pct_banco_horas',
       'converter_falta_folha_ponto', 'nao_gerar_debitos_meia_falta', 'banco_horas_somente_dom_feriado',
       'dividir_extras_50_100', 'calcular_60pct_sabados', 'sabado_somente_extras',
