@@ -14,7 +14,7 @@ export const OcorrenciaRepository = {
               DATE_FORMAT(o.data_inicio, '%Y-%m-%d') AS data_inicio,
               DATE_FORMAT(o.data_fim,    '%Y-%m-%d') AS data_fim,
               o.tipo, o.descricao,
-              o.tipo_ocorrencia_id, o.turno, o.tipo_hora, o.quantidade_horas,
+              o.tipo_ocorrencia_id, o.turno, o.tipo_hora, o.quantidade_horas, o.informativa,
               t.descricao AS tipo_ocorrencia_descricao,
               t.tipo_lancamento
          FROM ocorrencias o

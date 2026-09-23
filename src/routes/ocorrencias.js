@@ -120,13 +120,14 @@ export default async function ocorrenciasRoutes(fastify) {
           turno:             { type: 'string', enum: ['integral','1_periodo','2_periodo','3_periodo','4_periodo'] },
           tipo_hora:         { type: 'string', enum: ['hora_50_60','hora_100'] },
           quantidade_horas:  { type: ['number', 'null'] },
+          informativa:       { type: 'integer', minimum: 0, maximum: 1 },
           descricao:         { type: ['string', 'null'] },
         },
       },
     },
   }, async (request, reply) => {
     const { funcionario_id, data_inicio, data_fim, tipo_ocorrencia_id,
-            turno, tipo_hora, quantidade_horas, descricao } = request.body;
+            turno, tipo_hora, quantidade_horas, informativa, descricao } = request.body;
 
     // Verify funcionario belongs to empresa
     const [func] = await query(
@@ -145,10 +146,10 @@ export default async function ocorrenciasRoutes(fastify) {
     const result = await query(
       `INSERT INTO ocorrencias
          (funcionario_id, data_inicio, data_fim, tipo, tipo_ocorrencia_id,
-          turno, tipo_hora, quantidade_horas, descricao, lancado_por)
-       VALUES (?, ?, ?, 'outros', ?, ?, ?, ?, ?, ?)`,
+          turno, tipo_hora, quantidade_horas, informativa, descricao, lancado_por)
+       VALUES (?, ?, ?, 'outros', ?, ?, ?, ?, ?, ?, ?)`,
       [funcionario_id, data_inicio, data_fim, tipo_ocorrencia_id,
-       turno, tipo_hora, quantidade_horas ?? null, descricao?.trim() || null,
+       turno, tipo_hora, quantidade_horas ?? null, informativa ? 1 : 0, descricao?.trim() || null,
        request.user.id]
     );
 
@@ -158,7 +159,7 @@ export default async function ocorrenciasRoutes(fastify) {
 
   fastify.put('/ocorrencias/:id', async (request, reply) => {
     const { data_inicio, data_fim, tipo_ocorrencia_id, turno, tipo_hora,
-            quantidade_horas, descricao } = request.body ?? {};
+            quantidade_horas, informativa, descricao } = request.body ?? {};
 
     // Verify scope via funcionario join
     const [existing] = await query(
@@ -177,6 +178,7 @@ export default async function ocorrenciasRoutes(fastify) {
     if (turno !== undefined)              { fields.push('turno = ?');              values.push(turno); }
     if (tipo_hora !== undefined)          { fields.push('tipo_hora = ?');          values.push(tipo_hora); }
     if (quantidade_horas !== undefined)   { fields.push('quantidade_horas = ?');   values.push(quantidade_horas); }
+    if (informativa !== undefined)        { fields.push('informativa = ?');        values.push(informativa ? 1 : 0); }
     if (descricao !== undefined)          { fields.push('descricao = ?');          values.push(descricao?.trim() || null); }
 
     if (fields.length === 0) return reply.code(400).send({ error: 'Nenhum campo para atualizar' });

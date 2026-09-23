@@ -659,6 +659,11 @@ export const EspelhoPontoService = {
       // (crédito) ou redução (débito) do que foi trabalhado — não substitui
       // a jornada esperada do dia inteiro.
       const ocorrenciaSemBatidas = status === 'ocorrencia' && marcacoes.length === 0;
+      // Ocorrência "informativa" (marcada no lançamento): só serve pra explicar
+      // o motivo no Motivo da ficha — não entra na conta de jeito nenhum. O dia
+      // calcula exatamente como se não houvesse ocorrência (batidas cruas vs
+      // previsto), diferente da ocorrência normal de crédito/débito.
+      const ocorrenciaInformativa = status === 'ocorrencia' && ocorrencia?.informativa === 1;
 
       let minutos_previstos = null;
       let saldo_minutos = null;
@@ -671,7 +676,7 @@ export const EspelhoPontoService = {
       if (ehDiaTrabalho) {
         // For occurrence-only days, respect quantidade_horas when specified;
         // otherwise fall back to turno's carga for 'integral', or full day for other periods.
-        if (ocorrenciaSemBatidas && ocorrencia?.quantidade_horas != null) {
+        if (ocorrenciaSemBatidas && !ocorrenciaInformativa && ocorrencia?.quantidade_horas != null) {
           minutos_previstos = Math.round(Number(ocorrencia.quantidade_horas) * 60);
         } else if (usaEscala && escalaEntry && escalaEntry.tipo === 'trabalho') {
           // Use the scheduled time pairs; fall back to turno when escala has no times
@@ -690,6 +695,12 @@ export const EspelhoPontoService = {
         if (minutos_previstos != null) {
           if (naoCalcularExtrasDebito) {
             saldo_minutos = 0;
+          } else if (ocorrenciaInformativa) {
+            let raw = minutos - minutos_previstos;
+            if (raw < 0 && Math.abs(raw) <= toleranciaAtraso) raw = 0;
+            if (raw > 0 && raw <= toleranciaExtra) raw = 0;
+            saldo_minutos = raw;
+            saldoMes += saldo_minutos;
           } else if (ocorrenciaSemBatidas) {
             // Ocorrência de débito sem nenhuma batida (ex.: folga compensativa
             // que ainda não foi de fato compensada) vale como falta — deve o
@@ -702,17 +713,16 @@ export const EspelhoPontoService = {
               saldo_minutos = 0;
             }
           } else {
-            // Ocorrência num dia com batidas reais: soma (crédito) ou subtrai
-            // (débito, conforme tipos_ocorrencia.tipo_lancamento) do que foi
-            // efetivamente trabalhado, e o resultado é comparado contra a
-            // jornada normal do dia — a ocorrência complementa/reduz o
-            // trabalhado, não substitui nem zera a jornada esperada.
+            // Ocorrência num dia com batidas reais: SOMA ao que foi efetivamente
+            // trabalhado, cobrindo o período que faltou (ex.: folga compensativa
+            // só do 2º período, o resto do dia foi batido normalmente) — crédito
+            // e débito se comportam igual aqui, sempre somando. A diferença entre
+            // os dois só importa quando não há batida nenhuma no dia (ver acima,
+            // onde débito vira falta completa e crédito cobre a jornada).
             let minutosEfetivos = minutos;
             if (status === 'ocorrencia' && ocorrencia?.quantidade_horas != null) {
               const ocorrenciaMin = Math.round(Number(ocorrencia.quantidade_horas) * 60);
-              minutosEfetivos = ocorrencia.tipo_lancamento === 'debito'
-                ? minutos - ocorrenciaMin
-                : minutos + ocorrenciaMin;
+              minutosEfetivos = minutos + ocorrenciaMin;
             }
             minutos_trabalhados_ajustado = minutosEfetivos;
             let raw = minutosEfetivos - minutos_previstos;
@@ -870,6 +880,7 @@ export const EspelhoPontoService = {
               tipo_lancamento: ocorrencia.tipo_lancamento || null,
               turno: ocorrencia.turno || null,
               quantidade_horas: ocorrencia.quantidade_horas != null ? Number(ocorrencia.quantidade_horas) : null,
+              informativa: Number(ocorrencia.informativa) === 1,
             }
           : null,
         marcacoes,
