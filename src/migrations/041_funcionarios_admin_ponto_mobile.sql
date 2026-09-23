@@ -1,5 +1,5 @@
 -- ─── Migration 040: funcionarios.admin_ponto_mobile ────────────────────────────
--- O sistema Delphi antigo tinha um campo próprio (ADMINISTRADOR = 'X') pra
+-- O Sirrus Ponto Velox tinha um campo próprio (ADMINISTRADOR = 'X') pra
 -- marcar quem é administrador dentro do app Sirrus Ponto Mobile — conceito
 -- separado do `role` interno da Sirrus (admin/gestor/funcionario), que rege
 -- permissões daqui, não do app. Sem esse campo, o sync sempre mandava

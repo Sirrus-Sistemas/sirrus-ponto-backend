@@ -418,7 +418,9 @@ export const EspelhoPontoService = {
     );
     const tzOffsetMs = parseTzOffsetMs(tzOffset);
 
-    const [rows, feriadosRows, turnoRow, ocorrencias, diasBloqRows] = await Promise.all([
+    const mesReferencia = `${year}-${pad2(month)}`;
+
+    const [rows, feriadosRows, turnoRow, ocorrencias, diasBloqRows, bancoHorasAnteriorRows] = await Promise.all([
       MarcacaoRepository.findByFuncionarioMonth(funcionarioId, year, month, tzOffset, funcionario?.turno_entrada),
       FeriadoRepository.listByEmpresaMonth(empresaId, year, month),
       FuncionarioRepository.findTurnoJornada(funcionarioId),
@@ -429,7 +431,22 @@ export const EspelhoPontoService = {
           WHERE funcionario_id = ? AND data BETWEEN ? AND ?`,
         [funcionarioId, dataInicio, dataFim],
       ),
+      query(
+        `SELECT tipo_hora,
+                SUM(CASE WHEN tipo = 'credito' THEN minutos ELSE -minutos END) AS saldo
+           FROM banco_horas
+          WHERE funcionario_id = ? AND mes_referencia < ?
+          GROUP BY tipo_hora`,
+        [funcionarioId, mesReferencia],
+      ),
     ]);
+
+    let bancoHorasSaldoAnterior50pct = 0;
+    let bancoHorasSaldoAnterior100pct = 0;
+    for (const r of bancoHorasAnteriorRows) {
+      if (r.tipo_hora === '50pct') bancoHorasSaldoAnterior50pct = Number(r.saldo);
+      else if (r.tipo_hora === '100pct') bancoHorasSaldoAnterior100pct = Number(r.saldo);
+    }
 
     const bloqueadoSet = new Set(diasBloqRows.map((d) => d.data));
 
@@ -508,6 +525,7 @@ export const EspelhoPontoService = {
     let diasOcorrencia = 0;
     let totalExtras100pct = 0;
     let totalExtras50pct = 0;
+    let totalDebitoMinutos = 0;
     let totalMinutosNoturno = 0;
     const noturnoInicioMin = parseHoraMin(lotacao?.hora_inicio_adicional_noturno);
 
@@ -757,6 +775,7 @@ export const EspelhoPontoService = {
 
       totalExtras100pct += extras_100pct_minutos;
       totalExtras50pct  += extras_50pct_minutos;
+      if (saldo_minutos != null && saldo_minutos < 0) totalDebitoMinutos += Math.abs(saldo_minutos);
 
       // Noturno: count minutes in [noturnoInicio, 05:00) local; applies on any day with punches
       const minutos_noturno = rawDedup.length >= 2 ? minutosNocturnosPar(punchesParaCalculo, noturnoInicioMin, tzOffsetMs, data, calcularSemData) : 0;
@@ -838,6 +857,7 @@ export const EspelhoPontoService = {
         funcionario_data_admissao: funcionario?.data_admissao
           ? String(funcionario.data_admissao).slice(0, 10)
           : null,
+        usa_banco_horas: Number(funcionario?.usa_banco_horas) === 1,
         empresa_razao_social: empresa?.razao_social || null,
         empresa_cnpj: empresa?.cnpj || null,
         empresa_endereco: empresa?.endereco || null,
@@ -864,7 +884,18 @@ export const EspelhoPontoService = {
         dias_ocorrencia: diasOcorrencia,
         total_extras_100pct_minutos: totalExtras100pct,
         total_extras_50pct_minutos: totalExtras50pct,
+        total_debito_minutos: totalDebitoMinutos,
         total_minutos_noturno: totalMinutosNoturno,
+        // Banco de horas: saldo acumulado ANTES deste mês (soma de todo lançamento —
+        // manual ou fechamento — com mes_referencia anterior) e o saldo "atual"
+        // já projetando o líquido deste mês (mesma conta que o fechamento gravaria).
+        // 50% usa o saldo líquido do mês (extras − débito, é o mesmo saldoMes);
+        // 100% não tem débito equivalente, só crédito.
+        banco_horas_saldo_anterior_50pct_minutos: bancoHorasSaldoAnterior50pct,
+        banco_horas_saldo_atual_50pct_minutos:
+          minutosPrevistoDia != null ? bancoHorasSaldoAnterior50pct + saldoMes : bancoHorasSaldoAnterior50pct,
+        banco_horas_saldo_anterior_100pct_minutos: bancoHorasSaldoAnterior100pct,
+        banco_horas_saldo_atual_100pct_minutos: bancoHorasSaldoAnterior100pct + totalExtras100pct,
       },
     };
   },
