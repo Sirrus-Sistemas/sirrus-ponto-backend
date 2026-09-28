@@ -96,6 +96,29 @@ export default async function bancoHorasRoutes(fastify) {
     return reply.code(201).send(successResponse(resultado, `${resultado.importados} lançamento(s) importado(s).`));
   });
 
+  // ─── GET /banco-horas/relatorio/saldos — visão consolidada (RH) ────────────
+  fastify.get('/banco-horas/relatorio/saldos', {
+    preHandler: [authorize('admin', 'gestor')],
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          filial_id: { type: 'integer', minimum: 1 },
+          lotacao_id: { type: 'integer', minimum: 1 },
+          mes_referencia: { type: 'string', pattern: '^\\d{4}-\\d{2}$' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { filial_id, lotacao_id, mes_referencia } = request.query;
+    const linhas = await BancoHorasRepository.getSaldosEmpresa(request.empresaId, {
+      filialId: filial_id ?? null,
+      lotacaoId: lotacao_id ?? null,
+      mesReferencia: mes_referencia ?? null,
+    });
+    return successResponse(linhas);
+  });
+
   // ─── GET /banco-horas/:funcionarioId — saldo atual + extrato ───────────────
   fastify.get('/banco-horas/:funcionarioId', async (request, reply) => {
     const funcionarioId = parseInt(request.params.funcionarioId, 10);

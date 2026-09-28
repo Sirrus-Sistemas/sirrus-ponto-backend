@@ -17,11 +17,11 @@ export async function fecharMesBancoHoras(funcionarioId, empresaId, ano, mes, cr
   const { resumo } = espelho;
 
   const net50 = (resumo.total_extras_50pct_minutos || 0) - (resumo.total_debito_minutos || 0);
-  const net100 = resumo.total_extras_100pct_minutos || 0;
+  const net100 = (resumo.total_extras_100pct_minutos || 0) - (resumo.total_debito_100pct_minutos || 0);
 
   const candidatos = [
     net50 !== 0 && { tipo_hora: '50pct', tipo: net50 > 0 ? 'credito' : 'debito', minutos: Math.abs(net50) },
-    net100 !== 0 && { tipo_hora: '100pct', tipo: 'credito', minutos: net100 },
+    net100 !== 0 && { tipo_hora: '100pct', tipo: net100 > 0 ? 'credito' : 'debito', minutos: Math.abs(net100) },
   ].filter(Boolean);
 
   const jaFechadosNestaChamada = candidatos.filter((c) => jaFechados.includes(c.tipo_hora));

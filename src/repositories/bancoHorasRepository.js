@@ -38,6 +38,36 @@ export const BancoHorasRepository = {
     return saldos;
   },
 
+  /**
+   * Saldo de todos os funcionários (que usam banco de horas) da empresa,
+   * opcionalmente restrito a uma filial/lotação e a um "corte" de mês —
+   * usado pelo relatório consolidado (visão do RH, não do funcionário).
+   * Sem `mesReferencia`, soma todo o histórico (saldo atual real).
+   */
+  async getSaldosEmpresa(empresaId, { filialId = null, lotacaoId = null, mesReferencia = null } = {}) {
+    let sql = `
+      SELECT f.id AS funcionario_id, f.nome AS funcionario_nome, f.matricula,
+             f.filial_id, fi.nome AS filial_nome,
+             f.lotacao_id, lo.nome AS lotacao_nome,
+             COALESCE(SUM(CASE WHEN bh.tipo_hora = '50pct'
+                                THEN (CASE WHEN bh.tipo = 'credito' THEN bh.minutos ELSE -bh.minutos END)
+                                ELSE 0 END), 0) AS saldo_50pct_minutos,
+             COALESCE(SUM(CASE WHEN bh.tipo_hora = '100pct'
+                                THEN (CASE WHEN bh.tipo = 'credito' THEN bh.minutos ELSE -bh.minutos END)
+                                ELSE 0 END), 0) AS saldo_100pct_minutos
+        FROM funcionarios f
+        LEFT JOIN banco_horas bh ON bh.funcionario_id = f.id AND (? IS NULL OR bh.mes_referencia <= ?)
+        LEFT JOIN filiais fi ON fi.id = f.filial_id
+        LEFT JOIN lotacoes lo ON lo.id = f.lotacao_id
+       WHERE f.empresa_id = ? AND f.ativo = 1 AND f.usa_banco_horas = 1
+    `;
+    const params = [mesReferencia, mesReferencia, empresaId];
+    if (filialId) { sql += ' AND f.filial_id = ?'; params.push(filialId); }
+    if (lotacaoId) { sql += ' AND f.lotacao_id = ?'; params.push(lotacaoId); }
+    sql += ' GROUP BY f.id ORDER BY f.nome';
+    return query(sql, params);
+  },
+
   async contar(funcionarioId) {
     const [row] = await query('SELECT COUNT(*) AS total FROM banco_horas WHERE funcionario_id = ?', [funcionarioId]);
     return row.total;

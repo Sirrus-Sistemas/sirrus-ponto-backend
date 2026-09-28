@@ -544,6 +544,7 @@ export const EspelhoPontoService = {
     let totalExtras100pct = 0;
     let totalExtras50pct = 0;
     let totalDebitoMinutos = 0;
+    let totalDebito100pctMinutos = 0;
     let totalMinutosNoturno = 0;
     const noturnoInicioMin = parseHoraMin(lotacao?.hora_inicio_adicional_noturno);
 
@@ -825,9 +826,24 @@ export const EspelhoPontoService = {
         }
       }
 
+      // Ocorrência lançada com tipo_hora = 'hora_100': o crédito/débito dela vai
+      // pra carteira 100% do banco de horas (foi isso que o usuário escolheu no
+      // lançamento), em vez de cair no buraco genérico de 50% que toda falta/
+      // atraso/ocorrência comum usa. Sem isso o tipo_hora ficava só decorativo,
+      // nunca lido em lugar nenhum do cálculo.
+      const ocorrenciaHora100 = status === 'ocorrencia' && !ocorrenciaInformativa
+        && ocorrencia?.tipo_hora === 'hora_100' && !naoCalcularExtrasDebito;
+      if (ocorrenciaHora100 && extras_50pct_minutos > 0) {
+        extras_100pct_minutos += extras_50pct_minutos;
+        extras_50pct_minutos = 0;
+      }
+
       totalExtras100pct += extras_100pct_minutos;
       totalExtras50pct  += extras_50pct_minutos;
-      if (saldo_minutos != null && saldo_minutos < 0) totalDebitoMinutos += Math.abs(saldo_minutos);
+      if (saldo_minutos != null && saldo_minutos < 0) {
+        if (ocorrenciaHora100) totalDebito100pctMinutos += Math.abs(saldo_minutos);
+        else totalDebitoMinutos += Math.abs(saldo_minutos);
+      }
 
       // Noturno: count minutes in [noturnoInicio, 05:00) local; applies on any day with punches
       const minutos_noturno = rawDedup.length >= 2 ? minutosNocturnosPar(punchesParaCalculo, noturnoInicioMin, tzOffsetMs, data, calcularSemData) : 0;
@@ -938,17 +954,22 @@ export const EspelhoPontoService = {
         total_extras_100pct_minutos: totalExtras100pct,
         total_extras_50pct_minutos: totalExtras50pct,
         total_debito_minutos: totalDebitoMinutos,
+        total_debito_100pct_minutos: totalDebito100pctMinutos,
         total_minutos_noturno: totalMinutosNoturno,
         // Banco de horas: saldo acumulado ANTES deste mês (soma de todo lançamento —
-        // manual ou fechamento — com mes_referencia anterior) e o saldo "atual"
-        // já projetando o líquido deste mês (mesma conta que o fechamento gravaria).
-        // 50% usa o saldo líquido do mês (extras − débito, é o mesmo saldoMes);
-        // 100% não tem débito equivalente, só crédito.
+        // manual ou fechamento — com mes_referencia anterior) e o saldo "atual" já
+        // projetando o líquido deste mês (mesma conta que o fechamento gravaria).
+        // Cada carteira usa seu próprio líquido (extras − débito daquele tipo_hora)
+        // em vez do saldoMes geral, pra ocorrência lançada como 'hora_100' debitar
+        // de fato a carteira 100% em vez de vazar pro saldo de 50%.
         banco_horas_saldo_anterior_50pct_minutos: bancoHorasSaldoAnterior50pct,
         banco_horas_saldo_atual_50pct_minutos:
-          minutosPrevistoDia != null ? bancoHorasSaldoAnterior50pct + saldoMes : bancoHorasSaldoAnterior50pct,
+          minutosPrevistoDia != null
+            ? bancoHorasSaldoAnterior50pct + (totalExtras50pct - totalDebitoMinutos)
+            : bancoHorasSaldoAnterior50pct,
         banco_horas_saldo_anterior_100pct_minutos: bancoHorasSaldoAnterior100pct,
-        banco_horas_saldo_atual_100pct_minutos: bancoHorasSaldoAnterior100pct + totalExtras100pct,
+        banco_horas_saldo_atual_100pct_minutos:
+          bancoHorasSaldoAnterior100pct + (totalExtras100pct - totalDebito100pctMinutos),
       },
     };
   },
