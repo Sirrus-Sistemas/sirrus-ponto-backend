@@ -25,4 +25,25 @@ export const OcorrenciaRepository = {
       [funcionarioId, ultimo, primeiro]
     );
   },
+
+  /**
+   * Ocorrência existente que colide com o range/turno informado — usada pra
+   * bloquear no lançamento. 'integral' cobre o dia inteiro e nunca pode
+   * coexistir com outra ocorrência (de qualquer turno) no mesmo dia; duas
+   * ocorrências de período específico só colidem se forem do MESMO período
+   * (turnos diferentes, ex. 1º e 2º período, podem coexistir).
+   */
+  async existeConflito(funcionarioId, dataInicio, dataFim, turno, excludeId = null) {
+    const params = [funcionarioId, dataFim, dataInicio, turno, turno];
+    let sql = `
+      SELECT id, turno FROM ocorrencias
+       WHERE funcionario_id = ?
+         AND data_inicio <= ? AND data_fim >= ?
+         AND (turno = 'integral' OR ? = 'integral' OR turno = ?)
+    `;
+    if (excludeId != null) { sql += ' AND id != ?'; params.push(excludeId); }
+    sql += ' LIMIT 1';
+    const [row] = await query(sql, params);
+    return row || null;
+  },
 };

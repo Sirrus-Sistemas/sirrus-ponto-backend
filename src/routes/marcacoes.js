@@ -179,7 +179,10 @@ export default async function marcacaoRoutes(fastify) {
 
     const { funcionario_id, data_hora, motivo, justificativa, slot_override, dia_referencia } = request.body;
 
-    const func = await FuncionarioRepository.findById(funcionario_id);
+    const [func, empresa] = await Promise.all([
+      FuncionarioRepository.findById(funcionario_id),
+      EmpresaRepository.findById(request.empresaId),
+    ]);
     if (!func || func.empresa_id !== request.empresaId) {
       return reply.code(404).send({ error: 'Não encontrado', message: 'Funcionário não encontrado' });
     }
@@ -187,14 +190,27 @@ export default async function marcacaoRoutes(fastify) {
     // Accept ISO or "YYYY-MM-DD HH:MM" and normalise to MySQL DATETIME
     const normalized = data_hora.replace('T', ' ').replace('Z', '').slice(0, 19);
 
-    // Rejeita se já existe batida do mesmo funcionário dentro de 1 minuto da data/hora informada
+    // Rejeita se já existe batida do mesmo funcionário dentro de 1 minuto da data/hora
+    // informada. `normalized` chega em UTC de verdade (é assim que o frontend monta o
+    // manual), mas batida tipo 'rep' (relógio físico) é gravada em horário LOCAL puro,
+    // sem conversão (ver mesmo comentário em marcacaoRepository.js) — comparar a coluna
+    // crua contra `normalized` sem CONVERT_TZ pra 'rep' causava falso positivo sempre
+    // que a hora local informada, deslocada pelo fuso, coincidia com outra batida real
+    // do dia (ex.: 08:00 informado "colidindo" com uma batida das 12:00 do relógio).
+    const tzOffset = fusoHorarioToTzOffset(func.fuso_horario ?? empresa?.municipio_fuso_horario);
     const [proxima] = await query(
-      `SELECT id, DATE_FORMAT(data_hora, '%H:%i') AS hora_minuto
+      `SELECT id,
+              DATE_FORMAT(
+                CASE WHEN tipo = 'rep' THEN data_hora ELSE CONVERT_TZ(data_hora, '+00:00', ?) END,
+                '%H:%i'
+              ) AS hora_minuto
          FROM marcacoes
         WHERE funcionario_id = ?
-          AND ABS(TIMESTAMPDIFF(SECOND, data_hora, ?)) < 60
+          AND ABS(TIMESTAMPDIFF(SECOND,
+                CASE WHEN tipo = 'rep' THEN CONVERT_TZ(data_hora, ?, '+00:00') ELSE data_hora END,
+                ?)) < 60
         LIMIT 1`,
-      [funcionario_id, normalized],
+      [tzOffset, funcionario_id, tzOffset, normalized],
     );
 
     if (proxima) {

@@ -257,6 +257,39 @@ export function fusoHorarioToTzOffset(fusoHorario) {
   return m ? m[1] : (process.env.APP_TZ_OFFSET || '-03:00');
 }
 
+const TURNO_OCORRENCIA_PERIODO = {
+  '1_periodo': 1,
+  '2_periodo': 2,
+  '3_periodo': 3,
+  '4_periodo': 4,
+};
+
+/**
+ * Minutos previstos de um período específico (1º = entrada→saída do
+ * intervalo, 2º = retorno do intervalo→saída) a partir da Tabela de
+ * Horários do turno. 3º/4º período não têm janela configurada em lugar
+ * nenhum do sistema (turno_horarios só tem essas 4 colunas de horário) —
+ * retorna null nesse caso, e quem chama trata como "sem previsto".
+ */
+function periodoPrevistoMinutos(turnoHorariosMap, dow, periodoNum) {
+  const th = turnoHorariosMap.get(dow);
+  if (!th) return null;
+  const horaMin = (v) => {
+    if (!v) return null;
+    const [h, m] = String(v).slice(0, 5).split(':').map(Number);
+    return h * 60 + m;
+  };
+  if (periodoNum === 1) {
+    const a = horaMin(th.entrada), b = horaMin(th.saida_intervalo);
+    return a != null && b != null ? Math.max(0, b - a) : null;
+  }
+  if (periodoNum === 2) {
+    const a = horaMin(th.retorno_intervalo), b = horaMin(th.saida);
+    return a != null && b != null ? Math.max(0, b - a) : null;
+  }
+  return null;
+}
+
 function parseHoraMin(val) {
   if (!val) return 22 * 60;
   const [h, mi] = String(val).slice(0, 5).split(':').map(Number);
@@ -501,14 +534,19 @@ export const EspelhoPontoService = {
       }
     }
 
-    // Expand ocorrência date ranges into per-day entries (first occurrence wins)
+    // Expand ocorrência date ranges into per-day entries. Um dia pode ter mais de
+    // uma ocorrência simultânea (ex.: atestado no 1º período + folga compensativa
+    // no 2º), desde que sejam de turnos diferentes — o lançamento bloqueia turno
+    // repetido ou 'integral' coexistindo com outro turno (ver existeConflito), então
+    // aqui não precisa revalidar isso, só agrupar.
     const ocorrenciaMap = new Map();
     for (const oc of ocorrencias) {
       let t = new Date(String(oc.data_inicio).slice(0, 10) + 'T12:00:00');
       const end = new Date(String(oc.data_fim).slice(0, 10) + 'T12:00:00');
       while (t <= end) {
         const d = toIsoDate(t);
-        if (!ocorrenciaMap.has(d)) ocorrenciaMap.set(d, oc);
+        if (!ocorrenciaMap.has(d)) ocorrenciaMap.set(d, []);
+        ocorrenciaMap.get(d).push(oc);
         t = new Date(t.getTime() + 86400000);
       }
     }
@@ -582,7 +620,14 @@ export const EspelhoPontoService = {
       const feriadoRaw = feriadosMap.get(data) || null;
       const feriado = feriadoAfetaFuncionario(feriadoRaw, funcionario) ? feriadoRaw : null;
       const isFuturo = data > today;
-      const ocorrencia = ocorrenciaMap.get(data) || null;
+      const ocorrenciasDoDia = ocorrenciaMap.get(data) || [];
+      const ocorrenciaIntegral = ocorrenciasDoDia.find((o) => o.turno === 'integral') || null;
+      // Dia com 0 ou 1 ocorrência (ou uma 'integral', que nunca coexiste com outra —
+      // ver existeConflito) segue o caminho original sem nenhuma mudança de
+      // comportamento. Só quando há 2+ ocorrências de período específico no mesmo dia
+      // (ex.: 1º e 2º período) é que entra o cálculo por período mais abaixo.
+      const ocorrencia = ocorrenciaIntegral || ocorrenciasDoDia[0] || null;
+      const multiplasOcorrenciasPeriodo = !ocorrenciaIntegral && ocorrenciasDoDia.length > 1;
 
       const escalaEntry = usaEscala ? escalaMap.get(data) : null;
       const diaPrevisto = diaPrevistoDeTrabalho(usaEscala, escalaEntry, hasTurnoHorarios, turnoHorariosMap, dow);
@@ -593,7 +638,7 @@ export const EspelhoPontoService = {
       let status;
       let ehDiaTrabalho = false;
 
-      if (ocorrencia) {
+      if (ocorrenciasDoDia.length > 0) {
         // Ocorrência lançada com antecedência (ex.: atestado de 15 dias entregue hoje,
         // cobrindo dias futuros) vale mesmo pra dias ainda não vividos — do contrário
         // ficava soterrada pelo status 'futuro' e nunca aparecia na ficha até o dia chegar.
@@ -677,7 +722,7 @@ export const EspelhoPontoService = {
       if (ehDiaTrabalho) {
         // For occurrence-only days, respect quantidade_horas when specified;
         // otherwise fall back to turno's carga for 'integral', or full day for other periods.
-        if (ocorrenciaSemBatidas && !ocorrenciaInformativa && ocorrencia?.quantidade_horas != null) {
+        if (!multiplasOcorrenciasPeriodo && ocorrenciaSemBatidas && !ocorrenciaInformativa && ocorrencia?.quantidade_horas != null) {
           minutos_previstos = Math.round(Number(ocorrencia.quantidade_horas) * 60);
         } else if (usaEscala && escalaEntry && escalaEntry.tipo === 'trabalho') {
           // Use the scheduled time pairs; fall back to turno when escala has no times
@@ -696,6 +741,49 @@ export const EspelhoPontoService = {
         if (minutos_previstos != null) {
           if (naoCalcularExtrasDebito) {
             saldo_minutos = 0;
+          } else if (multiplasOcorrenciasPeriodo) {
+            // Cada ocorrência do dia afeta só o período (par de batidas) que ela
+            // declara — 1º período = E1/S1, 2º = E2/S2 (janela vem da Tabela de
+            // Horários do turno). 3º/4º período não têm previsto configurado em
+            // lugar nenhum do sistema, então só têm efeito se a ocorrência
+            // especificar quantidade de horas; sem isso, ficam só informativos,
+            // igual a uma ocorrência marcada 'informativa'.
+            let previstoEfetivo = minutos_previstos;
+            let minutosEfetivos = minutos;
+            for (const oc of ocorrenciasDoDia) {
+              if (Number(oc.informativa) === 1) continue;
+              const periodoNum = TURNO_OCORRENCIA_PERIODO[oc.turno] ?? null;
+              const indiceInicio = periodoNum != null ? (periodoNum - 1) * 2 : 0;
+              const temBatidasNoPeriodo = rawDedup.length > indiceInicio;
+              const qtdMin = oc.quantidade_horas != null ? Math.round(Number(oc.quantidade_horas) * 60) : null;
+              if (temBatidasNoPeriodo) {
+                // Período já tem batida real: ocorrência só soma quantidade
+                // declarada por cima, mesma regra do dia inteiro com batidas.
+                if (qtdMin != null) minutosEfetivos += qtdMin;
+                continue;
+              }
+              const periodoPrevisto = periodoNum != null && periodoNum <= 2
+                ? periodoPrevistoMinutos(turnoHorariosMap, dow, periodoNum)
+                : null;
+              if (periodoPrevisto != null) {
+                if (oc.tipo_lancamento === 'credito') {
+                  // Crédito cobre a exigência daquele período — reduz o previsto
+                  // do dia pra não gerar débito por tempo legitimamente coberto.
+                  previstoEfetivo -= periodoPrevisto;
+                }
+                // Débito: nada a fazer — a ausência de batida nesse período já
+                // reduz minutosEfetivos naturalmente contra o previsto do dia
+                // inteiro, que já conta como o débito esperado.
+              } else if (qtdMin != null) {
+                minutosEfetivos += oc.tipo_lancamento === 'credito' ? qtdMin : -qtdMin;
+              }
+            }
+            minutos_trabalhados_ajustado = minutosEfetivos;
+            let raw = minutosEfetivos - previstoEfetivo;
+            if (raw < 0 && Math.abs(raw) <= toleranciaAtraso) raw = 0;
+            if (raw > 0 && raw <= toleranciaExtra) raw = 0;
+            saldo_minutos = raw;
+            saldoMes += saldo_minutos;
           } else if (ocorrenciaInformativa) {
             let raw = minutos - minutos_previstos;
             if (raw < 0 && Math.abs(raw) <= toleranciaAtraso) raw = 0;
@@ -831,8 +919,14 @@ export const EspelhoPontoService = {
       // lançamento), em vez de cair no buraco genérico de 50% que toda falta/
       // atraso/ocorrência comum usa. Sem isso o tipo_hora ficava só decorativo,
       // nunca lido em lugar nenhum do cálculo.
-      const ocorrenciaHora100 = status === 'ocorrencia' && !ocorrenciaInformativa
-        && ocorrencia?.tipo_hora === 'hora_100' && !naoCalcularExtrasDebito;
+      // Em dia com múltiplas ocorrências de período, basta UMA não-informativa
+      // marcada 'hora_100' pra rotear o saldo do dia inteiro pra carteira 100% —
+      // o saldo já é calculado no nível do dia (não por período), então não dá
+      // pra separar qual fração veio de qual ocorrência com essa granularidade.
+      const ocorrenciaHora100 = status === 'ocorrencia' && !naoCalcularExtrasDebito
+        && (multiplasOcorrenciasPeriodo
+              ? ocorrenciasDoDia.some((o) => Number(o.informativa) !== 1 && o.tipo_hora === 'hora_100')
+              : !ocorrenciaInformativa && ocorrencia?.tipo_hora === 'hora_100');
       if (ocorrenciaHora100 && extras_50pct_minutos > 0) {
         extras_100pct_minutos += extras_50pct_minutos;
         extras_50pct_minutos = 0;
@@ -887,6 +981,10 @@ export const EspelhoPontoService = {
         bloqueado: bloqueadoSet.has(data),
         feriado,
         horarios_previstos,
+        // `ocorrencia` (singular): mantido por compatibilidade — é a primeira (ou a
+        // 'integral', quando existe) do dia. `ocorrencias` (plural): todas as do dia,
+        // pra telas que precisam mostrar mais de uma (ex.: 1º e 2º período no mesmo
+        // dia) — ver multiplasOcorrenciasPeriodo acima.
         ocorrencia: ocorrencia
           ? {
               id: ocorrencia.id,
@@ -899,6 +997,16 @@ export const EspelhoPontoService = {
               informativa: Number(ocorrencia.informativa) === 1,
             }
           : null,
+        ocorrencias: ocorrenciasDoDia.map((oc) => ({
+          id: oc.id,
+          tipo: oc.tipo,
+          descricao: oc.descricao || null,
+          tipo_ocorrencia_descricao: oc.tipo_ocorrencia_descricao || null,
+          tipo_lancamento: oc.tipo_lancamento || null,
+          turno: oc.turno || null,
+          quantidade_horas: oc.quantidade_horas != null ? Number(oc.quantidade_horas) : null,
+          informativa: Number(oc.informativa) === 1,
+        })),
         marcacoes,
         batidas_esperadas: batidasEsperadasHoje ?? null,
         minutos_trabalhados: minutos,

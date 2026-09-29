@@ -2,6 +2,15 @@ import { authenticate, authorize, empresaScope } from '../middlewares/auth.js';
 import { query } from '../config/database.js';
 import { successResponse } from '../utils/helpers.js';
 import { auditar } from '../services/auditService.js';
+import { OcorrenciaRepository } from '../repositories/ocorrenciaRepository.js';
+
+const TURNO_LABEL = {
+  integral: 'Integral',
+  '1_periodo': '1º Período',
+  '2_periodo': '2º Período',
+  '3_periodo': '3º Período',
+  '4_periodo': '4º Período',
+};
 
 export default async function ocorrenciasRoutes(fastify) {
   fastify.addHook('preHandler', authenticate);
@@ -143,6 +152,21 @@ export default async function ocorrenciasRoutes(fastify) {
     );
     if (!tipo) return reply.code(404).send({ error: 'Tipo de ocorrência não encontrado' });
 
+    // 'Integral' cobre o dia inteiro e não pode coexistir com outra ocorrência
+    // (de nenhum turno) no mesmo dia; duas ocorrências do MESMO período específico
+    // também colidem — mas 1º e 2º período (por exemplo) podem coexistir, cada uma
+    // afetando só as batidas do seu período.
+    const conflito = await OcorrenciaRepository.existeConflito(funcionario_id, data_inicio, data_fim, turno);
+    if (conflito) {
+      const label = TURNO_LABEL[conflito.turno] || conflito.turno;
+      return reply.code(409).send({
+        error: 'Conflito de ocorrência',
+        message: turno === 'integral' || conflito.turno === 'integral'
+          ? `Já existe uma ocorrência lançada (${label}) que colide com esse período — 'Integral' não pode coexistir com ocorrência de período específico no mesmo dia.`
+          : `Já existe uma ocorrência lançada para ${label} nesse período.`,
+      });
+    }
+
     const result = await query(
       `INSERT INTO ocorrencias
          (funcionario_id, data_inicio, data_fim, tipo, tipo_ocorrencia_id,
@@ -163,12 +187,39 @@ export default async function ocorrenciasRoutes(fastify) {
 
     // Verify scope via funcionario join
     const [existing] = await query(
-      `SELECT o.id FROM ocorrencias o
+      `SELECT o.id, o.funcionario_id,
+              DATE_FORMAT(o.data_inicio, '%Y-%m-%d') AS data_inicio,
+              DATE_FORMAT(o.data_fim,    '%Y-%m-%d') AS data_fim,
+              o.turno
+         FROM ocorrencias o
          JOIN funcionarios f ON f.id = o.funcionario_id AND f.empresa_id = ?
         WHERE o.id = ?`,
       [request.empresaId, request.params.id]
     );
     if (!existing) return reply.code(404).send({ error: 'Ocorrência não encontrada' });
+
+    // Só reavalia conflito se algum dos campos que definem a "janela" mudou —
+    // evita rodar a checagem (e sua leitura extra) numa edição que só troca a
+    // justificativa, por exemplo.
+    if (data_inicio !== undefined || data_fim !== undefined || turno !== undefined) {
+      const efetivo = {
+        data_inicio: data_inicio ?? existing.data_inicio,
+        data_fim: data_fim ?? existing.data_fim,
+        turno: turno ?? existing.turno,
+      };
+      const conflito = await OcorrenciaRepository.existeConflito(
+        existing.funcionario_id, efetivo.data_inicio, efetivo.data_fim, efetivo.turno, existing.id
+      );
+      if (conflito) {
+        const label = TURNO_LABEL[conflito.turno] || conflito.turno;
+        return reply.code(409).send({
+          error: 'Conflito de ocorrência',
+          message: efetivo.turno === 'integral' || conflito.turno === 'integral'
+            ? `Já existe uma ocorrência lançada (${label}) que colide com esse período — 'Integral' não pode coexistir com ocorrência de período específico no mesmo dia.`
+            : `Já existe uma ocorrência lançada para ${label} nesse período.`,
+        });
+      }
+    }
 
     const fields = [];
     const values = [];
