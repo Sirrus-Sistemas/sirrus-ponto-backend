@@ -1,3 +1,11 @@
+// IPv6 instável na VPS (visto em produção: `fetch failed` / `AggregateError ETIMEDOUT`
+// em internalConnectMultiple ao chamar a API do Ponto Mobile, e o mesmo ETIMEDOUT numa
+// conexão MySQL totalmente separada no mesmo período — não é bug de um serviço
+// específico, é o "happy eyeballs" do Node esperando o IPv6 falhar antes de cair pro
+// IPv4). Força IPv4 primeiro pra toda resolução de DNS do processo.
+import dns from 'node:dns';
+dns.setDefaultResultOrder('ipv4first');
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
