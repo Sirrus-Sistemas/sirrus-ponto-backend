@@ -4,6 +4,7 @@ import {
   salvarEscala,
   buscarPorPeriodo,
   listarFuncionariosComEscala,
+  listarEscalasGeradas,
 } from '../services/escalaService.js';
 import { query } from '../config/database.js';
 import { auditar } from '../services/auditService.js';
@@ -44,6 +45,35 @@ export default async function escalasRoutes(fastify) {
       : (request.user.filial_id ?? null);
 
     const lista = await listarFuncionariosComEscala(request.empresaId, filialId);
+    return { success: true, data: lista };
+  });
+
+  // ─── GET /escalas/geradas?ano=&mes=&lotacao_id=&filial_id= ─────────
+  // Lista funcionários que já têm escala gerada naquele mês — usado pra
+  // localizar/editar sem precisar saber de cor funcionário + período.
+  fastify.get('/escalas/geradas', {
+    preHandler: [authorize('admin', 'gestor')],
+    schema: {
+      querystring: {
+        type: 'object',
+        required: ['ano', 'mes'],
+        properties: {
+          ano: { type: 'string', pattern: '^[0-9]{4}$' },
+          mes: { type: 'string', pattern: '^(0?[1-9]|1[0-2])$' },
+          lotacao_id: { type: 'string', pattern: '^[0-9]+$' },
+          filial_id: { type: 'string', pattern: '^[0-9]+$' },
+        },
+      },
+    },
+  }, async (request) => {
+    const ano = parseInt(request.query.ano, 10);
+    const mes = parseInt(request.query.mes, 10);
+    const filialId = request.user.role === 'admin'
+      ? (request.query.filial_id ? Number(request.query.filial_id) : null)
+      : (request.user.filial_id ?? null);
+    const lotacaoId = request.query.lotacao_id ? Number(request.query.lotacao_id) : null;
+
+    const lista = await listarEscalasGeradas(request.empresaId, { ano, mes, lotacaoId, filialId });
     return { success: true, data: lista };
   });
 

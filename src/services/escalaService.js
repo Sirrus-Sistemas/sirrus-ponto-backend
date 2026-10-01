@@ -147,6 +147,39 @@ export async function listarFuncionariosComEscala(empresaId, filialId) {
   return query(sql, params);
 }
 
+/**
+ * Funcionários que JÁ têm escala gerada (pelo menos um dia em `escalas`) num
+ * mês/ano específico — para a tela de localizar/editar escala existente, sem
+ * precisar que o admin saiba de cor o funcionário e o período exatos.
+ */
+export async function listarEscalasGeradas(empresaId, { ano, mes, lotacaoId, filialId }) {
+  const primeiro = `${ano}-${String(mes).padStart(2, '0')}-01`;
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const ultimo = `${ano}-${String(mes).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`;
+
+  let sql = `
+    SELECT f.id AS funcionario_id, f.nome, f.matricula, f.cargo,
+           fi.nome AS filial_nome,
+           f.lotacao_id, lo.nome AS lotacao_nome,
+           DATE_FORMAT(MIN(e.data), '%Y-%m-%d') AS periodo_inicio,
+           DATE_FORMAT(MAX(e.data), '%Y-%m-%d') AS periodo_fim,
+           MAX(e.tipo_ciclo) AS tipo_ciclo,
+           COUNT(*) AS total_dias
+      FROM escalas e
+      JOIN funcionarios f ON f.id = e.funcionario_id
+      LEFT JOIN filiais fi ON fi.id = f.filial_id
+      LEFT JOIN lotacoes lo ON lo.id = f.lotacao_id
+     WHERE f.empresa_id = ? AND e.data BETWEEN ? AND ?
+  `;
+  const params = [empresaId, primeiro, ultimo];
+
+  if (lotacaoId) { sql += ' AND f.lotacao_id = ?'; params.push(lotacaoId); }
+  if (filialId) { sql += ' AND f.filial_id = ?'; params.push(filialId); }
+
+  sql += ' GROUP BY f.id ORDER BY f.nome';
+  return query(sql, params);
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 function toDate(v) {
