@@ -430,6 +430,7 @@ export default async function cadastrosRoutes(fastify) {
           nao_calcular_extras_debito: { type: 'integer', minimum: 0, maximum: 1 },
           hora_inicio_100pct:           { anyOf: [{ type: 'null' }, { type: 'string', pattern: '^\\d{2}:\\d{2}$' }] },
           hora_inicio_adicional_noturno: { anyOf: [{ type: 'null' }, { type: 'string', pattern: '^\\d{2}:\\d{2}$' }] },
+          nao_calcular_adicional_noturno: { type: 'integer', minimum: 0, maximum: 1 },
         },
       },
     },
@@ -445,8 +446,8 @@ export default async function cadastrosRoutes(fastify) {
         juntar_100pct_sabado_normal, atribuir_100pct_terceiro_domingo,
         lancar_debitos_domingo_50pct, tabela_zerada_e_folga,
         calcula_pares_sequenciais_noturno, nao_calcular_extras_debito,
-        hora_inicio_100pct, hora_inicio_adicional_noturno)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        hora_inicio_100pct, hora_inicio_adicional_noturno, nao_calcular_adicional_noturno)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         request.empresaId,
         d.nome,
@@ -473,6 +474,7 @@ export default async function cadastrosRoutes(fastify) {
         d.nao_calcular_extras_debito ?? 0,
         d.hora_inicio_100pct ?? null,
         d.hora_inicio_adicional_noturno ?? '22:00',
+        d.nao_calcular_adicional_noturno ?? 0,
       ]
     );
     return reply.code(201).send(successResponse({ id: result.insertId, ...d }, 'Lotação criada'));
@@ -491,7 +493,7 @@ export default async function cadastrosRoutes(fastify) {
       'juntar_100pct_sabado_normal', 'atribuir_100pct_terceiro_domingo',
       'lancar_debitos_domingo_50pct', 'tabela_zerada_e_folga',
       'calcula_pares_sequenciais_noturno', 'nao_calcular_extras_debito',
-      'hora_inicio_100pct', 'hora_inicio_adicional_noturno', 'ativo',
+      'hora_inicio_100pct', 'hora_inicio_adicional_noturno', 'nao_calcular_adicional_noturno', 'ativo',
     ];
     const fields = [];
     const values = [];

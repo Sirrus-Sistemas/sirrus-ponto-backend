@@ -513,7 +513,7 @@ export const EspelhoPontoService = {
           )
         : Promise.resolve([]),
       funcionario?.lotacao_id
-        ? query('SELECT feriado_tipo, domingo_tipo, domingo_nao_previsto_tipo, dia_nao_previsto_tipo, hora_inicio_adicional_noturno, dividir_extras_50_100, calcula_pares_sequenciais_noturno, nao_calcular_extras_debito FROM lotacoes WHERE id = ?', [funcionario.lotacao_id])
+        ? query('SELECT feriado_tipo, domingo_tipo, domingo_nao_previsto_tipo, dia_nao_previsto_tipo, hora_inicio_adicional_noturno, dividir_extras_50_100, calcula_pares_sequenciais_noturno, nao_calcular_extras_debito, nao_calcular_adicional_noturno FROM lotacoes WHERE id = ?', [funcionario.lotacao_id])
         : Promise.resolve([]),
     ]);
     for (const r of thRows) turnoHorariosMap.set(Number(r.dia_semana), r);
@@ -939,8 +939,14 @@ export const EspelhoPontoService = {
         else totalDebitoMinutos += Math.abs(saldo_minutos);
       }
 
-      // Noturno: count minutes in [noturnoInicio, 05:00) local; applies on any day with punches
-      const minutos_noturno = rawDedup.length >= 2 ? minutosNocturnosPar(punchesParaCalculo, noturnoInicioMin, tzOffsetMs, data, calcularSemData) : 0;
+      // Noturno: count minutes in [noturnoInicio, 05:00) local; applies on any day with punches.
+      // Lotação pode ter convenção/acordo coletivo que dispensa o adicional noturno —
+      // nesse caso nem calcula (zera também o acréscimo da hora reduzida, que depende
+      // deste valor — ver total_minutos_noturno/totalAcrescimoMin no resumo e na ficha).
+      const naoCalcularAdicionalNoturno = Number(lotacao?.nao_calcular_adicional_noturno) === 1;
+      const minutos_noturno = (!naoCalcularAdicionalNoturno && rawDedup.length >= 2)
+        ? minutosNocturnosPar(punchesParaCalculo, noturnoInicioMin, tzOffsetMs, data, calcularSemData)
+        : 0;
       totalMinutosNoturno += minutos_noturno;
 
       // Build expected punch times for justificativa automática
