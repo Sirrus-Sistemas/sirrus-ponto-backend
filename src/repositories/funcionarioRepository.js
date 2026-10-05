@@ -147,7 +147,7 @@ export const FuncionarioRepository = {
    */
   async findAll(empresaId, { filialId, departamentoId, lotacaoId, ativo, search, limit, offset }) {
     let sql = `
-      SELECT f.id, f.nome, f.email, f.cpf, f.cargo, f.matricula, f.role, f.ativo, f.usa_escala,
+      SELECT f.id, f.nome, f.email, f.cpf, f.pis, f.cargo, f.matricula, f.role, f.ativo, f.usa_escala,
              f.filial_id, f.lotacao_id, f.data_admissao, f.foto_path,
              fi.nome AS filial_nome,
              d.nome AS departamento_nome,
@@ -181,10 +181,13 @@ export const FuncionarioRepository = {
     }
     if (search) {
       const term = `%${search}%`;
-      const cpfDigits = search.replace(/\D/g, '');
-      const cpfTerm = cpfDigits.length > 0 ? `%${cpfDigits}%` : term;
-      sql += ' AND (f.nome LIKE ? OR f.email LIKE ? OR f.matricula LIKE ? OR f.cpf LIKE ?)';
-      params.push(term, term, term, cpfTerm);
+      // Marcações de relógio às vezes trazem o PIS com um prefixo de letra
+      // (ex.: "I01275464565") que não existe no PIS cadastrado — busca pelos
+      // dígitos puros pra não depender de o usuário "limpar" isso na mão.
+      const digits = search.replace(/\D/g, '');
+      const digitsTerm = digits.length > 0 ? `%${digits}%` : term;
+      sql += ' AND (f.nome LIKE ? OR f.email LIKE ? OR f.matricula LIKE ? OR f.cpf LIKE ? OR f.pis LIKE ?)';
+      params.push(term, term, term, digitsTerm, digitsTerm);
     }
 
     // Count total — usa [\s\S]+? para cruzar quebras de linha
