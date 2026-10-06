@@ -122,15 +122,11 @@ function minutosTrabalhadosPar(punches, dataStr, tzOffsetMs, calcularParesSemDat
     return { minutos, incompleto: punches.length % 2 === 1 };
   }
 
-  // Comportamento original: ordena por data_hora absoluta (crua) antes de somar
-  // pares, mas usa o valor ajustado por tipo (ver ajustarBatidaParaFronteira) na
-  // duração — necessário em dias com mistura de tipos (ex.: 3 batidas rep + 1
-  // lançamento manual/justificativa cobrindo a 4ª). rep grava o horário já local
-  // (sem conversão); manual/online/geo é UTC de verdade. Sem normalizar pro mesmo
-  // referencial antes de subtrair, um par que cruza esse limite (rep→não-rep)
-  // "ganha" ou "perde" o fuso inteiro na duração (ex.: 4h vira 8h com fuso -04:00).
-  const ordenadas = [...punches].sort((a, b) => new Date(a.data_hora) - new Date(b.data_hora));
-  const times = ordenadas.map((p) => ajustarBatidaParaFronteira(p, tzOffsetMs));
+  // Ordena pelo horário ajustado por tipo (ver timestampsAjustadosOrdenados) —
+  // necessário em dias com mistura de tipos (ex.: 3 batidas rep + 1 lançamento
+  // manual/justificativa cobrindo a 4ª), senão a ordem crua pode inverter dois
+  // eventos e formar pares errados.
+  const times = timestampsAjustadosOrdenados(punches, tzOffsetMs);
   let minutos = 0;
   for (let i = 0; i + 1 < times.length; i += 2) {
     minutos += Math.round((times[i + 1] - times[i]) / 60000);
@@ -209,6 +205,24 @@ function localMidnightUtcMs(dataStr, tzOffsetMs) {
 function ajustarBatidaParaFronteira(p, tzOffsetMs) {
   const utcMs = new Date(p.data_hora).getTime();
   return p.tipo === 'rep' ? utcMs - tzOffsetMs : utcMs;
+}
+
+/**
+ * Timestamps ajustados por tipo (ver ajustarBatidaParaFronteira acima), já
+ * ORDENADOS pelo valor ajustado — nunca pelo data_hora cru. Ordenar antes de
+ * ajustar mistura as duas convenções de armazenamento (rep é hora local pura;
+ * manual/online/geo é UTC de verdade) e pode inverter a ordem real de duas
+ * batidas do mesmo dia: ex. uma rep às 18:01 local, gravada sem fuso, tem
+ * valor cru numericamente MAIOR que uma manual às 14:04 local (gravada em UTC
+ * verdadeiro, bem menor em valor cru) — comparar os crus as coloca na ordem
+ * errada, formando pares trocados (duração absurda, ou um dia inteiro
+ * calculado como falta mesmo com a Jornada Realizada mostrando batidas
+ * completas e corretas).
+ */
+function timestampsAjustadosOrdenados(punches, tzOffsetMs) {
+  return punches
+    .map((p) => ajustarBatidaParaFronteira(p, tzOffsetMs))
+    .sort((a, b) => a - b);
 }
 
 /**
@@ -330,15 +344,12 @@ function minutosNocturnosPar(punches, noturnoInicioMin, tzOffsetMs, dataStr, cal
     return total;
   }
 
-  // Comportamento original: ordena por data_hora absoluta (crua) antes de
-  // somar pares, mas usa o valor ajustado por tipo (ver ajustarBatidaParaFronteira)
-  // na conta da janela noturna.
-  const ordenadas = [...punches].sort((a, b) => new Date(a.data_hora) - new Date(b.data_hora));
+  // Ordena pelo horário ajustado por tipo (ver timestampsAjustadosOrdenados)
+  // antes de formar os pares da janela noturna.
+  const times = timestampsAjustadosOrdenados(punches, tzOffsetMs);
   let total = 0;
-  for (let i = 0; i + 1 < ordenadas.length; i += 2) {
-    const inicio = ajustarBatidaParaFronteira(ordenadas[i], tzOffsetMs);
-    const fim = ajustarBatidaParaFronteira(ordenadas[i + 1], tzOffsetMs);
-    total += minutosNocturnosIntervalo(inicio, fim, noturnoInicioMin, tzOffsetMs);
+  for (let i = 0; i + 1 < times.length; i += 2) {
+    total += minutosNocturnosIntervalo(times[i], times[i + 1], noturnoInicioMin, tzOffsetMs);
   }
   return total;
 }
@@ -365,14 +376,13 @@ function minutosAposMeiaNoite(punches, shiftDateStr, tzOffsetMs, calcularParesSe
     return Math.round(total / 60000);
   }
 
-  // Comportamento original: ordena por data_hora absoluta (crua) antes de
-  // somar pares, mas usa o valor ajustado por tipo (ver ajustarBatidaParaFronteira)
-  // na comparação com a meia-noite.
-  const ordenadas = [...punches].sort((a, b) => new Date(a.data_hora) - new Date(b.data_hora));
+  // Ordena pelo horário ajustado por tipo (ver timestampsAjustadosOrdenados)
+  // antes de comparar com a meia-noite.
+  const times = timestampsAjustadosOrdenados(punches, tzOffsetMs);
   let total = 0;
-  for (let i = 0; i + 1 < ordenadas.length; i += 2) {
-    const inicio = ajustarBatidaParaFronteira(ordenadas[i], tzOffsetMs);
-    const fim = ajustarBatidaParaFronteira(ordenadas[i + 1], tzOffsetMs);
+  for (let i = 0; i + 1 < times.length; i += 2) {
+    const inicio = times[i];
+    const fim = times[i + 1];
     if (fim > midnightMs) total += fim - Math.max(inicio, midnightMs);
   }
   return Math.round(total / 60000);
