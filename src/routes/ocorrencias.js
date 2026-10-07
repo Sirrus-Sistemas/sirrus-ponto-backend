@@ -1,5 +1,5 @@
 import { authenticate, authorize, empresaScope } from '../middlewares/auth.js';
-import { query } from '../config/database.js';
+import { query, transaction } from '../config/database.js';
 import { successResponse } from '../utils/helpers.js';
 import { auditar } from '../services/auditService.js';
 import { OcorrenciaRepository } from '../repositories/ocorrenciaRepository.js';
@@ -78,7 +78,7 @@ export default async function ocorrenciasRoutes(fastify) {
   // ═══════════════════════════════════════════════════════════════════
 
   fastify.get('/ocorrencias', async (request) => {
-    const { funcionario_id, ano, mes } = request.query;
+    const { funcionario_id, ano, mes, data_inicio, data_fim } = request.query;
 
     let sql = `
       SELECT o.id, o.funcionario_id,
@@ -108,6 +108,9 @@ export default async function ocorrenciasRoutes(fastify) {
       const ultimo  = `${ano}-${pad(mes)}-${pad(diasMes)}`;
       sql += ' AND o.data_inicio <= ? AND o.data_fim >= ?';
       params.push(ultimo, primeiro);
+    } else if (data_inicio && data_fim) {
+      sql += ' AND o.data_inicio <= ? AND o.data_fim >= ?';
+      params.push(data_fim, data_inicio);
     }
 
     sql += ' ORDER BY o.data_inicio DESC';
@@ -250,5 +253,68 @@ export default async function ocorrenciasRoutes(fastify) {
     await query('DELETE FROM ocorrencias WHERE id = ?', [request.params.id]);
     auditar({ acao: 'DELETE', tabela: 'ocorrencias', registro_id: Number(request.params.id), dados_anteriores: { id: existing.id }, dados_novos: null, usuario_id: request.user.id, empresa_id: request.empresaId, ip: request.ip });
     return successResponse(null, 'Ocorrência excluída');
+  });
+
+  // Exclusão em massa: todas as ocorrências do funcionário que colidem com o
+  // período informado (mesmo critério de overlap usado no GET/existeConflito).
+  fastify.delete('/ocorrencias/massa', {
+    schema: {
+      querystring: {
+        type: 'object',
+        required: ['funcionario_id', 'data_inicio', 'data_fim'],
+        properties: {
+          funcionario_id: { type: 'string' },
+          data_inicio:    { type: 'string' },
+          data_fim:       { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { funcionario_id, data_inicio, data_fim } = request.query;
+
+    const [func] = await query(
+      'SELECT id, nome FROM funcionarios WHERE id = ? AND empresa_id = ?',
+      [funcionario_id, request.empresaId]
+    );
+    if (!func) return reply.code(404).send({ error: 'Funcionário não encontrado' });
+
+    if (data_fim < data_inicio) {
+      return reply.code(400).send({ error: 'data_fim não pode ser anterior a data_inicio' });
+    }
+
+    const existentes = await query(
+      `SELECT id,
+              DATE_FORMAT(data_inicio, '%Y-%m-%d') AS data_inicio,
+              DATE_FORMAT(data_fim,    '%Y-%m-%d') AS data_fim,
+              tipo_ocorrencia_id, turno, tipo_hora, quantidade_horas
+         FROM ocorrencias
+        WHERE funcionario_id = ? AND data_inicio <= ? AND data_fim >= ?`,
+      [funcionario_id, data_fim, data_inicio]
+    );
+
+    if (existentes.length === 0) {
+      return successResponse({ excluidas: 0 }, 'Nenhuma ocorrência encontrada nesse período');
+    }
+
+    const ids = existentes.map((o) => o.id);
+    await transaction(async (conn) => {
+      await conn.query('DELETE FROM ocorrencias WHERE id IN (?)', [ids]);
+    });
+
+    auditar({
+      acao: 'DELETE',
+      tabela: 'ocorrencias',
+      registro_id: `massa-${funcionario_id}-${data_inicio}-${data_fim}`,
+      dados_anteriores: { funcionario_id: Number(funcionario_id), data_inicio, data_fim, ocorrencias: existentes },
+      dados_novos: null,
+      usuario_id: request.user.id,
+      empresa_id: request.empresaId,
+      ip: request.ip,
+    });
+
+    return successResponse(
+      { excluidas: existentes.length },
+      `${existentes.length} ocorrência(s) excluída(s) de ${func.nome}.`
+    );
   });
 }

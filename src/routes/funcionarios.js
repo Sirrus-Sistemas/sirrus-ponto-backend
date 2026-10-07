@@ -243,6 +243,16 @@ export default async function funcionarioRoutes(fastify) {
     const updated = await FuncionarioRepository.findById(request.params.id);
     delete updated.senha_hash;
 
+    // Mesma revalidação que já acontecia na criação do funcionário (CPF/PIS
+    // batendo com marcação pendente, vincula sozinho) — faltava aqui na edição.
+    // Sem isso, um funcionário cadastrado sem PIS (ou com PIS errado) e
+    // corrigido depois nunca tinha as batidas antigas, já pendentes, revinculadas
+    // de volta — ficavam presas pra sempre em "Marcações Pendentes de Vínculo".
+    RelogioMarcacaoRepository.vincularPendentes(request.empresaId, Number(request.params.id), {
+      cpf: updated.cpf ?? null,
+      pis: updated.pis ?? null,
+    }).catch(() => {});
+
     return successResponse(updated, 'Funcionário atualizado com sucesso');
   });
 

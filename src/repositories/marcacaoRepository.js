@@ -115,8 +115,12 @@ export const MarcacaoRepository = {
       return { inserida: true, marcacaoId: result.insertId };
     }
 
+    // Restrito a tipo='rep': desde que REP grava hora local pura (sem
+    // conversão), um manual/online/geo pode coincidir no mesmo valor cru só
+    // por coincidência de convenção — não é o mesmo evento, não deve ser
+    // retornado aqui como se fosse a marcação já existente deste NSR.
     const [row] = await query(
-      `SELECT id FROM marcacoes WHERE funcionario_id = ? AND data_hora = ? LIMIT 1`,
+      `SELECT id FROM marcacoes WHERE funcionario_id = ? AND data_hora = ? AND tipo = 'rep' LIMIT 1`,
       [funcionarioId, dataHora],
     );
     return { inserida: false, marcacaoId: row?.id ?? null };

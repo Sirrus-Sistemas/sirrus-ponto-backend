@@ -356,6 +356,10 @@ export async function syncAllFuncionarios(empresaId, filialId = null, onProgress
   // Sincroniza funcionários em paralelo (lotes de 10 para não sobrecarregar a API mobile)
   let sincronizados = 0;
   const erros = [];
+  // Resultado por funcionário (não só a contagem) — pra tela "Sincronizar todos"
+  // poder mostrar o mesmo status por linha que o sync individual já mostra,
+  // em vez de só um contador agregado de erros sem indicar quem falhou.
+  const sucessos = [];
   const CONCURRENCY = 10;
 
   for (let i = 0; i < funcs.length; i += CONCURRENCY) {
@@ -365,13 +369,17 @@ export async function syncAllFuncionarios(empresaId, filialId = null, onProgress
       mobileLotacaoId: f.lotacao_id ? lotacaoCache.get(f.lotacao_id) : null,
     })));
     for (let j = 0; j < lote.length; j++) {
-      if (resultados[j].status === 'fulfilled') sincronizados++;
-      else erros.push({ funcionario_id: lote[j].id, error: resultados[j].reason?.message });
+      if (resultados[j].status === 'fulfilled') {
+        sincronizados++;
+        sucessos.push({ funcionario_id: lote[j].id, pontomobile_id: resultados[j].value });
+      } else {
+        erros.push({ funcionario_id: lote[j].id, error: resultados[j].reason?.message });
+      }
     }
-    onProgress?.({ processados: Math.min(i + CONCURRENCY, funcs.length), sincronizados, erros: [...erros] });
+    onProgress?.({ processados: Math.min(i + CONCURRENCY, funcs.length), sincronizados, erros: [...erros], sucessos: [...sucessos] });
   }
 
-  return { sincronizados, erros };
+  return { sincronizados, erros, sucessos };
 }
 
 // ── Job em background da sincronização em lote ───────────────────────────────
@@ -398,6 +406,7 @@ export function iniciarSyncAllFuncionarios(empresaId, filialId = null) {
     processados: 0,
     sincronizados: 0,
     erros: [],
+    sucessos: [],
     erroGeral: null,
     iniciadoEm: Date.now(),
     finalizadoEm: null,
@@ -409,6 +418,7 @@ export function iniciarSyncAllFuncionarios(empresaId, filialId = null) {
       job.status = 'concluido';
       job.sincronizados = resultado.sincronizados;
       job.erros = resultado.erros;
+      job.sucessos = resultado.sucessos;
       job.processados = job.total;
       job.finalizadoEm = Date.now();
     })

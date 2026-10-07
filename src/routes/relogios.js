@@ -228,6 +228,19 @@ export default async function relogiosRoutes(fastify) {
     return successResponse(null, 'Marcação vinculada com sucesso.');
   });
 
+  // ── POST /api/relogios/marcacoes/validar-todos  (tela de reconciliação)
+  // Revalida todas as pendentes da empresa contra o cadastro atual —
+  // resolve de uma vez o caso de CPF/PIS corrigido depois da importação.
+  fastify.post('/relogios/marcacoes/validar-todos', { preHandler: [authorize('admin')] }, async (request) => {
+    const resultado = await RelogioMarcacaoRepository.revalidarTodos(request.empresaId);
+    return successResponse(
+      resultado,
+      resultado.vinculadas > 0
+        ? `${resultado.vinculadas} de ${resultado.total} marcação(ões) pendente(s) vinculada(s) automaticamente.`
+        : 'Nenhuma marcação pendente bateu com o cadastro atual.',
+    );
+  });
+
   // ── POST /api/relogios/marcacoes/importar-afd  (upload manual, relógio sem rede)
   //
   // Alternativa ao sistema de coleta local (TCP/IP) para equipamentos sem

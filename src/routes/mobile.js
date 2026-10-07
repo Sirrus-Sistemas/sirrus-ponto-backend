@@ -116,6 +116,7 @@ export default async function mobileRoutes(fastify) {
       processados: job.processados,
       sincronizados: job.sincronizados,
       erros: job.erros,
+      sucessos: job.sucessos,
       erro_geral: job.erroGeral,
     });
   });

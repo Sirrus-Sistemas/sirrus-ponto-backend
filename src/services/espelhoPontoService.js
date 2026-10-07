@@ -15,18 +15,29 @@ const TIPO_LABEL = {
 };
 
 /**
- * Deduplica marcações que têm o mesmo minuto (HH:MM).
- * Mantém apenas a primeira batida de cada minuto.
- * Mesma lógica do buildSlots do frontend — mantém consistência entre tela e relatório.
+ * Deduplica marcações que têm o mesmo minuto (HH:MM) NO HORÁRIO LOCAL da
+ * empresa/funcionário. Mantém apenas a primeira batida de cada minuto.
  *
- * @param {Array} items  Marcações ordenadas cronologicamente.
- * @returns {Array}      Marcações deduplica das por HH:MM.
+ * `new Date(m.data_hora).getHours()/getMinutes()` (versão anterior) usava o
+ * fuso do SERVIDOR (ex.: America/Fortaleza, UTC-3) e comparava o valor cru
+ * de `data_hora` direto — nem reflete o fuso real da empresa (pode ser
+ * qualquer UTC-X configurado) nem sabe que 'rep' grava hora local pura
+ * enquanto manual/online/geo grava UTC de verdade (ver ajustarBatidaParaFronteira).
+ * Duas batidas de tipos diferentes podiam cair no mesmo HH:MM só por
+ * coincidência dessas duas contas erradas somadas — uma sendo descartada
+ * como "duplicata" sem ser, fazendo a contagem de batidas do dia ficar ímpar
+ * e o dia virar "Inconsistente" mesmo com todas as batidas reais presentes.
+ *
+ * @param {Array} items  Marcações (cada uma com `data_hora` e `tipo`), ordenadas cronologicamente.
+ * @param {number} tzOffsetMs  Fuso da empresa/funcionário, em ms (ver parseTzOffsetMs).
+ * @returns {Array}      Marcações deduplicadas por HH:MM local.
  */
-function deduplicateByHHMM(items) {
+function deduplicateByHHMM(items, tzOffsetMs) {
   const seenTimes = new Set();
   return items.filter(m => {
-    const d = new Date(m.data_hora);
-    const key = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const localMs = ajustarBatidaParaFronteira(m, tzOffsetMs) + tzOffsetMs;
+    const d = new Date(localMs);
+    const key = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
     if (seenTimes.has(key)) return false;
     seenTimes.add(key);
     return true;
@@ -160,6 +171,21 @@ function toIsoDate(d) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
+/**
+ * Formata uma coluna DATE do banco (ex.: funcionarios.data_admissao) como
+ * "YYYY-MM-DD". O mysql2 devolve coluna DATE como objeto Date ancorado em
+ * UTC 00:00 — usa os getters UTC (não os locais, que aplicam o fuso do
+ * servidor e podem voltar um dia) pra recuperar a data calendário real.
+ */
+function formatarDataAdmissao(val) {
+  if (!val) return null;
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return null;
+    return `${val.getUTCFullYear()}-${pad2(val.getUTCMonth() + 1)}-${pad2(val.getUTCDate())}`;
+  }
+  return String(val).slice(0, 10);
+}
+
 const DIAS_PT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 function normalizarBatidasEsperadas(val) {
@@ -232,13 +258,23 @@ function timestampsAjustadosOrdenados(punches, tzOffsetMs) {
  * dia de relatório diferente da sua data real (turno que cruza a meia-noite), e
  * nesse caso a diferença entre timestamps absolutos não reflete a duração real
  * do turno.
+ *
+ * Usa ajustarBatidaParaFronteira (tipo-aware) antes de somar tzOffsetMs — não o
+ * data_hora cru direto. rep grava hora local pura; manual/online/geo é UTC de
+ * verdade. Somar tzOffsetMs direto no cru day certo só por coincidência quando
+ * todas as batidas do dia são do mesmo tipo (o deslocamento erra igual pra
+ * todas e cancela na subtração); um dia com rep + manual misturados (comum:
+ * REP bateu 3, faltou 1 e foi completado manualmente) dá horário virtual
+ * errado pra cada tipo por um deslocamento diferente, resultando num total
+ * de horas completamente absurdo mesmo em turno comercial normal, sem
+ * atravessar meia-noite nenhuma.
  */
 function virtualPunchTimestamps(punches, dataStr, tzOffsetMs) {
   const baseUtcMs = localMidnightUtcMs(dataStr, tzOffsetMs);
   let prevTod = null;
   let dayOffset = 0;
   return punches.map((p) => {
-    const utcMs = new Date(p.data_hora).getTime();
+    const utcMs = ajustarBatidaParaFronteira(p, tzOffsetMs);
     const tod = (((utcMs + tzOffsetMs) % DAY_MS) + DAY_MS) % DAY_MS;
     if (prevTod !== null && tod < prevTod) dayOffset += 1;
     prevTod = tod;
@@ -594,6 +630,14 @@ export const EspelhoPontoService = {
     let totalDebitoMinutos = 0;
     let totalDebito100pctMinutos = 0;
     let totalMinutosNoturno = 0;
+    // "Resumo de Ocorrências" do rodapé: soma quantas horas cada ocorrência
+    // DECLAROU (previsto do dia/período quando cobre inteiro, ou a quantidade
+    // de horas informada quando há batida parcial), agrupado pelo tipo do
+    // lançamento — não é o efeito líquido no saldo (que pode divergir, ex.:
+    // ocorrência de período só debita o que não está coberto por batida).
+    // Informativa nunca soma aqui, por definição.
+    let totalOcorrenciaDebitoMinutos = 0;
+    let totalOcorrenciaCreditoMinutos = 0;
     const noturnoInicioMin = parseHoraMin(lotacao?.hora_inicio_adicional_noturno);
 
     const dias = eachCalendarDay(year, month).map((data) => {
@@ -611,11 +655,11 @@ export const EspelhoPontoService = {
       // Aplica slot_override: garante que relatório e tela usem a mesma ordem de exibição.
       // raw (order by data_hora) continua sendo usado para cálculos de minutos.
       const marcacoesComOverride = applySlotOverride(marcacoesRaw);
-      // Deduplica por HH:MM — mesma lógica do frontend para consistência
-      const marcacoes = deduplicateByHHMM(marcacoesComOverride);
+      // Deduplica por HH:MM local (consciente de fuso e de tipo — ver deduplicateByHHMM)
+      const marcacoes = deduplicateByHHMM(marcacoesComOverride, tzOffsetMs);
 
-      // Deduplica raw também para cálculo de minutos (consistência com frontend)
-      const rawDedup = deduplicateByHHMM(raw);
+      // Deduplica raw também para cálculo de minutos
+      const rawDedup = deduplicateByHHMM(raw, tzOffsetMs);
 
       // Calcula minutos com base nas batidas deduplica das
       const calcularSemData = Number(lotacao?.calcula_pares_sequenciais_noturno) === 1;
@@ -766,10 +810,15 @@ export const EspelhoPontoService = {
               const indiceInicio = periodoNum != null ? (periodoNum - 1) * 2 : 0;
               const temBatidasNoPeriodo = rawDedup.length > indiceInicio;
               const qtdMin = oc.quantidade_horas != null ? Math.round(Number(oc.quantidade_horas) * 60) : null;
+              // Horas declaradas por esta ocorrência (pro "Resumo de Ocorrências"),
+              // independente do efeito líquido calculado acima/abaixo.
+              let ocDeclaradoMin = 0;
               if (temBatidasNoPeriodo) {
                 // Período já tem batida real: ocorrência só soma quantidade
                 // declarada por cima, mesma regra do dia inteiro com batidas.
-                if (qtdMin != null) minutosEfetivos += qtdMin;
+                if (qtdMin != null) { minutosEfetivos += qtdMin; ocDeclaradoMin = qtdMin; }
+                if (oc.tipo_lancamento === 'credito') totalOcorrenciaCreditoMinutos += ocDeclaradoMin;
+                else if (oc.tipo_lancamento === 'debito') totalOcorrenciaDebitoMinutos += ocDeclaradoMin;
                 continue;
               }
               const periodoPrevisto = periodoNum != null && periodoNum <= 2
@@ -784,9 +833,13 @@ export const EspelhoPontoService = {
                 // Débito: nada a fazer — a ausência de batida nesse período já
                 // reduz minutosEfetivos naturalmente contra o previsto do dia
                 // inteiro, que já conta como o débito esperado.
+                ocDeclaradoMin = periodoPrevisto;
               } else if (qtdMin != null) {
                 minutosEfetivos += oc.tipo_lancamento === 'credito' ? qtdMin : -qtdMin;
+                ocDeclaradoMin = qtdMin;
               }
+              if (oc.tipo_lancamento === 'credito') totalOcorrenciaCreditoMinutos += ocDeclaradoMin;
+              else if (oc.tipo_lancamento === 'debito') totalOcorrenciaDebitoMinutos += ocDeclaradoMin;
             }
             minutos_trabalhados_ajustado = minutosEfetivos;
             let raw = minutosEfetivos - previstoEfetivo;
@@ -808,8 +861,10 @@ export const EspelhoPontoService = {
             if (ocorrencia?.tipo_lancamento === 'debito') {
               saldo_minutos = -minutos_previstos;
               saldoMes += saldo_minutos;
+              totalOcorrenciaDebitoMinutos += minutos_previstos;
             } else {
               saldo_minutos = 0;
+              totalOcorrenciaCreditoMinutos += minutos_previstos;
             }
           } else {
             // Ocorrência num dia com batidas reais: SOMA ao que foi efetivamente
@@ -822,6 +877,8 @@ export const EspelhoPontoService = {
             if (status === 'ocorrencia' && ocorrencia?.quantidade_horas != null) {
               const ocorrenciaMin = Math.round(Number(ocorrencia.quantidade_horas) * 60);
               minutosEfetivos = minutos + ocorrenciaMin;
+              if (ocorrencia?.tipo_lancamento === 'credito') totalOcorrenciaCreditoMinutos += ocorrenciaMin;
+              else if (ocorrencia?.tipo_lancamento === 'debito') totalOcorrenciaDebitoMinutos += ocorrenciaMin;
             }
             minutos_trabalhados_ajustado = minutosEfetivos;
             let raw = minutosEfetivos - minutos_previstos;
@@ -834,22 +891,24 @@ export const EspelhoPontoService = {
         }
       }
 
-      // Só usado como informação exibida (campo `batidas_esperadas` do dia) —
-      // não entra mais no cálculo de "incompleto" (ver abaixo). Quando o turno
-      // tem tabela por dia da semana (turno_horarios), a contagem específica
-      // do dia tem prioridade sobre o padrão fixo do turno; este só entra como
-      // fallback quando o dia não tem configuração própria (ex.:
-      // batidasEsperadasDoDia retorna null em folga).
+      // Campo `batidas_esperadas` do dia (exibido) e também usado abaixo pra
+      // decidir "incompleto". Quando o turno tem tabela por dia da semana
+      // (turno_horarios), a contagem específica do dia tem prioridade sobre o
+      // padrão fixo do turno; este só entra como fallback quando o dia não tem
+      // configuração própria (ex.: batidasEsperadasDoDia retorna null em folga).
       const batidasEsperadasHoje = hasTurnoHorarios
         ? (batidasEsperadasDoDia(turnoHorariosMap.get(dow)) ?? batidasEsperadasDia)
         : batidasEsperadasDia;
 
-      // incompleto: só por batida sem par (número ímpar) — não compara contra
-      // batidas_esperadas_dia nenhum. O funcionário pode bater menos ou mais
-      // batidas que o parametrizado sem gerar inconsistência; só fica
-      // inconsistente quando falta o par de alguma batida (entrada sem saída
-      // correspondente, por exemplo), deixando a contagem do dia ímpar.
+      // incompleto: batida sem par (número ímpar, ex.: entrada sem saída
+      // correspondente) OU menos batidas do que o esperado pro turno, mesmo em
+      // número par — ex.: só bateu entrada/saída da manhã (2 batidas, par),
+      // mas o turno espera 4 (manhã + tarde). A jornada não está completa só
+      // porque as batidas que existem formam pares certinhos.
       if (intervaloAberto && ehDiaTrabalho && marcacoes.length > 0) {
+        if (!modifiers.includes('incompleto')) modifiers.push('incompleto');
+      }
+      if (ehDiaTrabalho && marcacoes.length > 0 && batidasEsperadasHoje != null && marcacoes.length < batidasEsperadasHoje) {
         if (!modifiers.includes('incompleto')) modifiers.push('incompleto');
       }
       const incompleto = modifiers.includes('incompleto');
@@ -1047,9 +1106,15 @@ export const EspelhoPontoService = {
         funcionario_matricula: funcionario?.matricula || null,
         funcionario_pis: funcionario?.pis || null,
         funcionario_cpf: funcionario?.cpf || null,
-        funcionario_data_admissao: funcionario?.data_admissao
-          ? String(funcionario.data_admissao).slice(0, 10)
-          : null,
+        // `data_admissao` vem do mysql2 como objeto Date (coluna DATE, âncorada
+        // em UTC 00:00). String(dateObj) chama .toString(), que usa o fuso
+        // LOCAL do servidor — além de produzir texto tipo "Tue Jul 14 2026...",
+        // .slice(0,10) ainda cortava isso como se fosse "YYYY-MM-DD", virando
+        // lixo tipo "Tue Jul 14" na ficha. E como .toString() já aplica o fuso
+        // do servidor, o dia também saía errado (14 em vez do 15 real, com
+        // servidor em UTC-3). Usa os getters UTC pra ler a data calendário
+        // real, sem depender do fuso do servidor nem de formatação de texto.
+        funcionario_data_admissao: formatarDataAdmissao(funcionario?.data_admissao),
         usa_banco_horas: Number(funcionario?.usa_banco_horas) === 1,
         empresa_razao_social: empresa?.razao_social || null,
         empresa_cnpj: empresa?.cnpj || null,
@@ -1061,7 +1126,12 @@ export const EspelhoPontoService = {
         turno_nome: turnoNome,
         turno_horario: buildTurnoHorario(funcionario || {}),
         minutos_previsto_dia_referencia: minutosPrevistoDia,
-        dias_feriado_calendario: feriadosRows.length,
+        // Filtra pela localidade do funcionário (mesma regra usada dia a dia —
+        // ver feriadoAfetaFuncionario) — sem isso, "Total Feriados" no rodapé
+        // contava todo feriado do calendário da empresa (de qualquer cidade/
+        // estado cadastrado em alguma filial), em vez de só os que realmente
+        // afetam esse funcionário específico.
+        dias_feriado_calendario: feriadosRows.filter((f) => feriadoAfetaFuncionario(f, funcionario)).length,
         batidas_esperadas_dia: batidasEsperadasDia,
       },
       dias,
@@ -1080,6 +1150,10 @@ export const EspelhoPontoService = {
         total_debito_minutos: totalDebitoMinutos,
         total_debito_100pct_minutos: totalDebito100pctMinutos,
         total_minutos_noturno: totalMinutosNoturno,
+        // "Resumo de Ocorrências" do rodapé — horas declaradas por ocorrência
+        // lançada (não o efeito líquido no saldo, ver totalOcorrencia* acima).
+        total_ocorrencia_debito_minutos: totalOcorrenciaDebitoMinutos,
+        total_ocorrencia_credito_minutos: totalOcorrenciaCreditoMinutos,
         // Banco de horas: saldo acumulado ANTES deste mês (soma de todo lançamento —
         // manual ou fechamento — com mes_referencia anterior) e o saldo "atual" já
         // projetando o líquido deste mês (mesma conta que o fechamento gravaria).

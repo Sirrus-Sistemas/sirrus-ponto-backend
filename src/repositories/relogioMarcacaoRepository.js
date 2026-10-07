@@ -73,16 +73,19 @@ export const RelogioMarcacaoRepository = {
       );
     }
 
-    // Recupera o id da marcação por (funcionario_id, data_hora) — a chave de
-    // deduplicação real (migration 026), não (relogio_id, nsr): cobre tanto
-    // a que acabamos de inserir quanto uma já existente de outra origem
-    // (ex.: batida manual ou do app no mesmo minuto).
+    // Recupera o id da marcação por (funcionario_id, data_hora, tipo='rep') —
+    // a chave de deduplicação real (migration 026, ajustada pela 046), cobrindo
+    // tanto a que acabamos de inserir quanto uma 'rep' já existente de outro
+    // import. Restrito a tipo='rep': desde a 035 (rep grava hora local pura,
+    // sem conversão), um manual/online/geo pode coincidir no mesmo valor cru
+    // por pura coincidência de convenção — não é "o mesmo evento", é outro
+    // horário real, então não deve ser tratado como a marcação deste NSR.
     const marcacaoIdPorChave = new Map();
     for (const lote of chunk(comFuncionario, LOTE)) {
       const placeholders = lote.map(() => '(?, ?)').join(', ');
       const params = lote.flatMap((m) => [m.funcionarioId, m.dataHora]);
       const rows = await query(
-        `SELECT id, funcionario_id, data_hora FROM marcacoes WHERE (funcionario_id, data_hora) IN (${placeholders})`,
+        `SELECT id, funcionario_id, data_hora FROM marcacoes WHERE tipo = 'rep' AND (funcionario_id, data_hora) IN (${placeholders})`,
         params,
       );
       for (const r of rows) marcacaoIdPorChave.set(chaveMarcacao(r.funcionario_id, r.data_hora), r.id);
@@ -190,6 +193,47 @@ export const RelogioMarcacaoRepository = {
       await this.vincular(p.id, funcionarioId);
     }
     return pendentes.length;
+  },
+
+  /**
+   * Revalida TODAS as marcações pendentes desta empresa contra o cadastro
+   * ATUAL de funcionários (por CPF ou PIS) — botão "Validar todos" da tela de
+   * reconciliação. Cobre o caso em que o CPF/PIS do funcionário foi corrigido
+   * DEPOIS que as batidas antigas já tinham sido importadas: o vínculo
+   * automático só roda ao criar/editar aquele funcionário específico (ver
+   * vincularPendentes), então um reimport em lote de histórico, ou uma
+   * correção feita antes dessa checagem existir, pode deixar pendentes presas
+   * mesmo com o cadastro já certo. Retorna quantas foram vinculadas agora.
+   */
+  async revalidarTodos(empresaId) {
+    const funcs = await query(
+      'SELECT id, cpf, pis FROM funcionarios WHERE empresa_id = ? AND ativo = 1',
+      [empresaId],
+    );
+    const porCpf = new Map();
+    const porPis = new Map();
+    for (const f of funcs) {
+      if (f.cpf) porCpf.set(String(f.cpf).replace(/\D/g, ''), f.id);
+      if (f.pis) porPis.set(String(f.pis).replace(/\D/g, ''), f.id);
+    }
+
+    const pendentes = await query(
+      `SELECT rmi.id, rmi.cpf, rmi.pis
+         FROM relogio_marcacoes_importadas rmi
+         JOIN relogios_ponto r ON r.id = rmi.relogio_id
+        WHERE r.empresa_id = ? AND rmi.status = 'pendente'`,
+      [empresaId],
+    );
+
+    let vinculadas = 0;
+    for (const p of pendentes) {
+      let funcionarioId = null;
+      if (p.cpf) funcionarioId = porCpf.get(String(p.cpf).replace(/\D/g, '')) ?? null;
+      if (!funcionarioId && p.pis) funcionarioId = porPis.get(String(p.pis).replace(/\D/g, '')) ?? null;
+      if (!funcionarioId) continue;
+      if (await this.vincular(p.id, funcionarioId)) vinculadas++;
+    }
+    return { total: pendentes.length, vinculadas };
   },
 
   /**
