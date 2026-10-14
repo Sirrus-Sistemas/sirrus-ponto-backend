@@ -529,21 +529,18 @@ export const EspelhoPontoService = {
         [funcionarioId, dataInicio, dataFim],
       ),
       query(
-        `SELECT tipo_hora,
-                SUM(CASE WHEN tipo = 'credito' THEN minutos ELSE -minutos END) AS saldo
+        `SELECT COALESCE(SUM(CASE WHEN tipo = 'credito' THEN minutos ELSE -minutos END), 0) AS saldo
            FROM banco_horas
-          WHERE funcionario_id = ? AND mes_referencia < ?
-          GROUP BY tipo_hora`,
+          WHERE funcionario_id = ? AND mes_referencia < ?`,
         [funcionarioId, mesReferencia],
       ),
     ]);
 
-    let bancoHorasSaldoAnterior50pct = 0;
-    let bancoHorasSaldoAnterior100pct = 0;
-    for (const r of bancoHorasAnteriorRows) {
-      if (r.tipo_hora === '50pct') bancoHorasSaldoAnterior50pct = Number(r.saldo);
-      else if (r.tipo_hora === '100pct') bancoHorasSaldoAnterior100pct = Number(r.saldo);
-    }
+    // Saldo transportado de meses anteriores: consolidado num único número,
+    // já somando as carteiras 50%/100% — só as horas GERADAS no mês (extras/
+    // débito deste mês) continuam detalhadas por percentual (padrão Ponto
+    // Velox). Ver uso em banco_horas_saldo_anterior_minutos/_atual_minutos.
+    const bancoHorasSaldoAnterior = Number(bancoHorasAnteriorRows[0]?.saldo ?? 0);
 
     const bloqueadoSet = new Set(diasBloqRows.map((d) => d.data));
 
@@ -1157,17 +1154,18 @@ export const EspelhoPontoService = {
         // Banco de horas: saldo acumulado ANTES deste mês (soma de todo lançamento —
         // manual ou fechamento — com mes_referencia anterior) e o saldo "atual" já
         // projetando o líquido deste mês (mesma conta que o fechamento gravaria).
-        // Cada carteira usa seu próprio líquido (extras − débito daquele tipo_hora)
-        // em vez do saldoMes geral, pra ocorrência lançada como 'hora_100' debitar
-        // de fato a carteira 100% em vez de vazar pro saldo de 50%.
-        banco_horas_saldo_anterior_50pct_minutos: bancoHorasSaldoAnterior50pct,
-        banco_horas_saldo_atual_50pct_minutos:
+        // Líquido do mês soma as duas carteiras (extras − débito de cada
+        // tipo_hora) antes de somar ao saldo anterior — já consolidado, sem
+        // separação por percentual (padrão Ponto Velox). Sem jornada prevista
+        // no dia de referência não dá pra apurar o líquido do mês, então o
+        // saldo atual fica igual ao anterior (mesma guarda de saldo_mes_minutos).
+        banco_horas_saldo_anterior_minutos: bancoHorasSaldoAnterior,
+        banco_horas_saldo_atual_minutos:
           minutosPrevistoDia != null
-            ? bancoHorasSaldoAnterior50pct + (totalExtras50pct - totalDebitoMinutos)
-            : bancoHorasSaldoAnterior50pct,
-        banco_horas_saldo_anterior_100pct_minutos: bancoHorasSaldoAnterior100pct,
-        banco_horas_saldo_atual_100pct_minutos:
-          bancoHorasSaldoAnterior100pct + (totalExtras100pct - totalDebito100pctMinutos),
+            ? bancoHorasSaldoAnterior
+              + (totalExtras50pct - totalDebitoMinutos)
+              + (totalExtras100pct - totalDebito100pctMinutos)
+            : bancoHorasSaldoAnterior,
       },
     };
   },
