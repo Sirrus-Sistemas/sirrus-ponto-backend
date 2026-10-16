@@ -13,8 +13,12 @@ import {
   listarPendentesAprovacao,
   decidirMarcacoesMobile,
   listarConflitosPontomobileId,
+  redefinirSenhaMobile,
+  importarCercasDoMobile,
 } from '../services/pontoMobileService.js';
 import { auditar } from '../services/auditService.js';
+import { motivoSenhaFraca } from '../services/authService.js';
+import { query } from '../config/database.js';
 
 export default async function mobileRoutes(fastify) {
   fastify.addHook('preHandler', authenticate);
@@ -74,7 +78,70 @@ export default async function mobileRoutes(fastify) {
     );
   });
 
-  // ── Sincronizar todos os funcionários (com filtro opcional de filial) ────────
+  // ── Importar cercas eletrônicas que já existem no app ───────────────────────
+
+  fastify.post('/mobile/cercas/importar', async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
+    const r = await importarCercasDoMobile(request.empresaId);
+    auditar({
+      acao: 'INSERT',
+      tabela: 'cerca_locais',
+      registro_id: `importacao-mobile-${request.empresaId}`,
+      dados_anteriores: null,
+      dados_novos: r,
+      usuario_id: request.user.id,
+      empresa_id: request.empresaId,
+      ip: request.ip,
+    });
+    return successResponse(
+      r,
+      `${r.importados} cerca(s) importada(s). ${r.ja_configurados} já configurada(s) aqui (mantidas), `
+        + `${r.sem_cerca} sem cerca no app${r.nao_encontrados ? `, ${r.nao_encontrados} não vinculada(s) a funcionário daqui` : ''}.`,
+    );
+  });
+
+  // ── Redefinir a senha do funcionário no app Ponto Mobile ────────────────────
+  // A sincronização normal não mexe mais na senha do app (ver syncFuncionario);
+  // esta é a forma de o admin trocar a senha de quem esqueceu.
+
+  fastify.post('/mobile/funcionarios/:id/senha', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['senha'],
+        properties: { senha: { type: 'string', minLength: 6, maxLength: 100 } },
+      },
+    },
+  }, async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
+    const id = parseInt(request.params.id, 10);
+    const [func] = await query('SELECT id, cpf, empresa_id FROM funcionarios WHERE id = ? LIMIT 1', [id]);
+    if (!func || func.empresa_id !== request.empresaId) {
+      return reply.code(404).send({ error: 'Funcionário não encontrado' });
+    }
+    const motivo = motivoSenhaFraca(request.body.senha, func.cpf);
+    if (motivo) return reply.code(422).send({ error: motivo, message: motivo });
+
+    const aplicada = await redefinirSenhaMobile(id, request.body.senha);
+    auditar({
+      acao: 'UPDATE',
+      tabela: 'funcionarios',
+      registro_id: id,
+      dados_anteriores: null,
+      dados_novos: { senha_mobile: '(redefinida)' },
+      usuario_id: request.user.id,
+      empresa_id: request.empresaId,
+      ip: request.ip,
+    });
+    return successResponse(
+      { aplicada },
+      aplicada
+        ? 'Senha do Ponto Mobile redefinida.'
+        : 'Senha salva — será usada quando o funcionário for sincronizado com o Ponto Mobile.',
+    );
+  });
+
+  // ── Sincronizar todos os funcionários (filtros opcionais de filial e lotação) ─
 
   fastify.post(
     '/mobile/sync/funcionarios',
@@ -84,14 +151,17 @@ export default async function mobileRoutes(fastify) {
           type: 'object',
           properties: {
             filial_id: { type: 'integer', minimum: 1 },
+            lotacao_id: { type: 'integer', minimum: 1 },
           },
         },
       },
     },
     async (request, reply) => {
       if (!requireAdmin(request, reply)) return;
-      const filialId = request.body?.filial_id ?? null;
-      const { jobId, jaEmAndamento } = iniciarSyncAllFuncionarios(request.empresaId, filialId);
+      const { jobId, jaEmAndamento } = iniciarSyncAllFuncionarios(request.empresaId, {
+        filialId: request.body?.filial_id ?? null,
+        lotacaoId: request.body?.lotacao_id ?? null,
+      });
       return successResponse(
         { job_id: jobId },
         jaEmAndamento

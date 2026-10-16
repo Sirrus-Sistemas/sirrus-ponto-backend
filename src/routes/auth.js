@@ -3,6 +3,27 @@ import { authenticate } from '../middlewares/auth.js';
 import { EmpresaRepository } from '../repositories/empresaRepository.js';
 import { checkLicenca } from '../services/licencaService.js';
 import crypto from 'crypto';
+import { onlyCpfDigits } from '../utils/cpf.js';
+
+// Limite por CPF (não por IP): o global de 500/min deixava testar senhas à
+// vontade, e limitar só por IP travaria uma empresa inteira atrás do mesmo NAT.
+// Conta toda tentativa, inclusive as certas — 5 em 15 min sobra para quem erra
+// a senha de verdade.
+const limitePorCpf = {
+  rateLimit: {
+    max: 5,
+    timeWindow: '15 minutes',
+    // Padrão é onRequest, antes do body ser lido — sem isso o CPF nunca chega
+    // no keyGenerator e tudo cairia na chave do IP.
+    hook: 'preHandler',
+    keyGenerator: (request) => `cpf:${onlyCpfDigits(request.body?.cpf) || request.ip}`,
+    errorResponseBuilder: (_request, context) => ({
+      statusCode: 429,
+      error: 'Muitas tentativas',
+      message: `Muitas tentativas para este CPF. Tente de novo em ${Math.ceil(context.ttl / 60000)} minuto(s).`,
+    }),
+  },
+};
 
 // Schemas de validação (Fastify JSON Schema)
 const loginSchema = {
@@ -59,9 +80,34 @@ const resetPasswordSchema = {
 };
 
 export default async function authRoutes(fastify) {
+  async function emitirTokens(request, userData) {
+    const accessToken = fastify.jwt.sign(
+      {
+        id: userData.id,
+        empresa_id: userData.empresa_id,
+        filial_id: userData.filial_id ?? null,
+        role: userData.role,
+        // Enquanto true, authenticate só libera trocar a senha (ver middleware).
+        ...(userData.trocar_senha ? { trocar_senha: true } : {}),
+      },
+      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
+    );
+
+    const refreshToken = crypto.randomBytes(40).toString('hex');
+    const days = parseInt(process.env.JWT_REFRESH_EXPIRES_IN) || 7;
+    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+    await AuthService.saveRefreshToken(userData.id, refreshToken, {
+      deviceInfo: request.headers['user-agent'],
+      ipAddress: request.ip,
+      expiresAt,
+    });
+
+    return { accessToken, refreshToken };
+  }
 
   // ─── POST /auth/forgot-password ───────────────────────────────────
-  fastify.post('/auth/forgot-password', { schema: forgotPasswordSchema }, async (request) => {
+  fastify.post('/auth/forgot-password', { schema: forgotPasswordSchema, config: limitePorCpf }, async (request) => {
     const { cpf } = request.body;
     const result = await AuthService.requestPasswordReset(cpf);
 
@@ -94,7 +140,7 @@ export default async function authRoutes(fastify) {
   });
 
   // ─── POST /auth/login ─────────────────────────────────────────────
-  fastify.post('/auth/login', { schema: loginSchema }, async (request, reply) => {
+  fastify.post('/auth/login', { schema: loginSchema, config: limitePorCpf }, async (request, reply) => {
     const { cpf, password } = request.body;
 
     const userData = await AuthService.login(cpf, password);
@@ -111,28 +157,7 @@ export default async function authRoutes(fastify) {
     }
     await checkLicenca(cnpjLicenca, request.log);
 
-    // Gera access token (curta duração)
-    const accessToken = fastify.jwt.sign(
-      {
-        id: userData.id,
-        empresa_id: userData.empresa_id,
-        filial_id: userData.filial_id ?? null,
-        role: userData.role,
-      },
-      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
-    );
-
-    // Gera refresh token (longa duração)
-    const refreshToken = crypto.randomBytes(40).toString('hex');
-    const refreshExpiresIn = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
-    const days = parseInt(refreshExpiresIn) || 7;
-    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-
-    await AuthService.saveRefreshToken(userData.id, refreshToken, {
-      deviceInfo: request.headers['user-agent'],
-      ipAddress: request.ip,
-      expiresAt,
-    });
+    const { accessToken, refreshToken } = await emitirTokens(request, userData);
 
     return {
       success: true,
@@ -146,6 +171,7 @@ export default async function authRoutes(fastify) {
           turno: userData.turno_nome,
           filial_id: userData.filial_id ?? null,
           filial: userData.filial_nome ?? null,
+          trocar_senha: userData.trocar_senha,
         },
         access_token: accessToken,
         refresh_token: refreshToken,
@@ -160,26 +186,7 @@ export default async function authRoutes(fastify) {
 
     const userData = await AuthService.verifyRefreshToken(refresh_token);
 
-    // Gera novo par de tokens
-    const accessToken = fastify.jwt.sign(
-      {
-        id: userData.id,
-        empresa_id: userData.empresa_id,
-        filial_id: userData.filial_id ?? null,
-        role: userData.role,
-      },
-      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
-    );
-
-    const newRefreshToken = crypto.randomBytes(40).toString('hex');
-    const days = parseInt(process.env.JWT_REFRESH_EXPIRES_IN) || 7;
-    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-
-    await AuthService.saveRefreshToken(userData.id, newRefreshToken, {
-      deviceInfo: request.headers['user-agent'],
-      ipAddress: request.ip,
-      expiresAt,
-    });
+    const { accessToken, refreshToken: newRefreshToken } = await emitirTokens(request, userData);
 
     return {
       success: true,
@@ -204,6 +211,22 @@ export default async function authRoutes(fastify) {
   }, async (request, reply) => {
     const { current_password, new_password } = request.body;
     await AuthService.changePassword(request.user.id, current_password, new_password);
-    return { success: true, message: 'Senha alterada com sucesso. Faça login novamente.' };
+
+    // changePassword revoga todas as sessões; esta continua com tokens novos
+    // (sem a trava de troca obrigatória) para não obrigar outro login logo
+    // depois da troca no primeiro acesso.
+    const { accessToken, refreshToken } = await emitirTokens(request, {
+      ...request.user,
+      trocar_senha: false,
+    });
+    return {
+      success: true,
+      message: 'Senha alterada com sucesso.',
+      data: {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        expires_in: process.env.JWT_EXPIRES_IN || '15m',
+      },
+    };
   });
 }

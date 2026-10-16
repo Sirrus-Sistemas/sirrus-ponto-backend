@@ -10,6 +10,7 @@
  */
 
 import { query } from '../config/database.js';
+import { resolverParaFuncionario } from './cercaService.js';
 import { PONTO_DUPLICATA_JANELA_SEG } from '../config/constants.js';
 import crypto from 'crypto';
 
@@ -240,7 +241,31 @@ export async function syncLotacao(lotacaoId, mobileEmpresaId) {
 
 // ── Sincronização de Funcionário ─────────────────────────────────────────────
 
-export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEmpresaId, mobileLotacaoId: cachedLotacaoId } = {}) {
+/** Campos de cerca eletrônica no formato da API do Ponto Mobile. */
+function corpoCerca({ validaLocalizacao, locais }) {
+  const principal = locais[0];
+  return {
+    valida_localizacao: validaLocalizacao ? 'S' : 'N',
+    locais: locais.map((l) => ({
+      latitude: l.latitude,
+      longitude: l.longitude,
+      raio: l.raio_metros,
+      descricao: l.descricao,
+    })),
+    // Campos legados (local único) — a API ainda grava; ficam com o 1º local.
+    latitude: principal?.latitude ?? 0,
+    longitude: principal?.longitude ?? 0,
+    raio: principal?.raio_metros ?? 0,
+  };
+}
+
+/**
+ * `enviarSenha`: só quando o admin redefiniu a senha do app (ver
+ * redefinirSenhaMobile). Fora isso a senha vai apenas na criação do usuário no
+ * Ponto Mobile — a API só troca a senha quando ela vem preenchida, e reenviar
+ * a cada sincronização desfazia a troca que o funcionário fez no próprio app.
+ */
+export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEmpresaId, mobileLotacaoId: cachedLotacaoId, enviarSenha = false } = {}) {
   const [func] = await query(
     `SELECT f.id, f.nome, f.cpf, f.email, f.ativo, f.lotacao_id,
             f.pontomobile_id, f.filial_id, f.senha_mobile, f.admin_ponto_mobile
@@ -267,18 +292,24 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
     cpf: cpfClean,
     empresa_id: mobileEmpresaId,
     email: func.email || `${cpfClean}@pontomobile.local`,
-    senha: senhaMobile,
     ativo: func.ativo === 1,
     admin: func.admin_ponto_mobile === 1 ? 'S' : 'N',
     ...(mobileLotacaoId != null ? { lotacao_id: mobileLotacaoId } : {}),
+    // Cerca eletrônica (filial + lotação + funcionário, ver cercaService). Vai
+    // SEMPRE: a API apaga os locais e zera valida_localizacao quando eles não
+    // vêm na requisição — antes, todo sync desfazia a cerca configurada.
+    ...corpoCerca(await resolverParaFuncionario(func.id)),
   };
+
+  // Atualização: sem `senha`, a API mantém a senha atual do app.
+  const bodyAtualizacao = enviarSenha ? { ...body, senha: senhaMobile } : body;
 
   let mobileId = func.pontomobile_id;
   if (mobileId) {
-    await _request('PUT', `/admin/users_funcionarios/new/${mobileId}`, body);
+    await _request('PUT', `/admin/users_funcionarios/new/${mobileId}`, bodyAtualizacao);
   } else {
     try {
-      const res = await _request('POST', '/admin/users_funcionarios', body);
+      const res = await _request('POST', '/admin/users_funcionarios', { ...body, senha: senhaMobile });
       mobileId = res.id;
     } catch (err) {
       // CPF já existe no mobile — descobre o ID fazendo login como o funcionário
@@ -289,8 +320,9 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
       mobileId = await _resolverMobileIdPorCpf(cpfClean, senhas);
       if (!mobileId) throw new Error(`Funcionário já existe no mobile mas não foi possível descobrir o ID. CPF: ${cpfClean}`);
 
-      // Atualiza dados no mobile agora que temos o ID
-      await _request('PUT', `/admin/users_funcionarios/new/${mobileId}`, body);
+      // Atualiza dados no mobile agora que temos o ID — a senha que ele já usa
+      // no app (achada no login acima) fica como está.
+      await _request('PUT', `/admin/users_funcionarios/new/${mobileId}`, bodyAtualizacao);
     }
 
     // pontomobile_id é a chave do funcionário no banco do Ponto Mobile — dois
@@ -316,18 +348,92 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
   return mobileId;
 }
 
+/**
+ * Importa para cá a cerca eletrônica que cada funcionário já tem no Ponto
+ * Mobile (GET /admin/empresas/:id/cercas), como cerca do próprio funcionário.
+ * Só para quem ainda não tem cerca configurada aqui — nunca sobrescreve. Feito
+ * para rodar antes de este sistema passar a gerenciar as cercas: a partir daí
+ * toda sincronização envia a cerca daqui e substitui a do app.
+ */
+export async function importarCercasDoMobile(empresaId) {
+  const filiais = await query(
+    'SELECT id, pontomobile_id FROM filiais WHERE empresa_id = ? AND pontomobile_id IS NOT NULL',
+    [empresaId],
+  );
+  const resultado = { importados: 0, ja_configurados: 0, sem_cerca: 0, nao_encontrados: 0, erros: [] };
+
+  for (const filial of filiais) {
+    let itens;
+    try {
+      const res = await _request('GET', `/admin/empresas/${filial.pontomobile_id}/cercas`);
+      itens = Array.isArray(res) ? res : (res?.data ?? []);
+    } catch (err) {
+      resultado.erros.push({ filial_id: filial.id, error: err.message });
+      continue;
+    }
+
+    for (const item of itens) {
+      const locais = (item.locais?.length ? item.locais : (item.local_legado ? [item.local_legado] : []))
+        .filter((l) => Number(l.latitude) && Number(l.longitude) && Number(l.raio) > 0);
+      const valida = item.valida_localizacao === 'S';
+      if (!valida && locais.length === 0) { resultado.sem_cerca += 1; continue; }
+
+      const [func] = await query(
+        'SELECT id, valida_localizacao FROM funcionarios WHERE empresa_id = ? AND pontomobile_id = ? LIMIT 1',
+        [empresaId, item.funcionario_id],
+      );
+      if (!func) { resultado.nao_encontrados += 1; continue; }
+
+      const [{ total }] = await query(
+        "SELECT COUNT(*) AS total FROM cerca_locais WHERE escopo = 'funcionario' AND referencia_id = ?",
+        [func.id],
+      );
+      if (func.valida_localizacao !== null || Number(total) > 0) { resultado.ja_configurados += 1; continue; }
+
+      await query('UPDATE funcionarios SET valida_localizacao = ? WHERE id = ?', [valida ? 1 : 0, func.id]);
+      for (const l of locais) {
+        await query(
+          `INSERT INTO cerca_locais (empresa_id, escopo, referencia_id, descricao, latitude, longitude, raio_metros)
+           VALUES (?, 'funcionario', ?, ?, ?, ?, ?)`,
+          [empresaId, func.id, l.descricao || 'Importado do Ponto Mobile', l.latitude, l.longitude, Math.round(l.raio)],
+        );
+      }
+      resultado.importados += 1;
+    }
+  }
+  return resultado;
+}
+
+/**
+ * Redefine a senha do funcionário no app Ponto Mobile (admin). Grava em
+ * senha_mobile e, se o funcionário já existe no app, envia na hora; senão
+ * vai junto na criação, na próxima sincronização.
+ * Retorna true quando a senha já foi aplicada no app.
+ */
+export async function redefinirSenhaMobile(funcionarioId, senha) {
+  await query('UPDATE funcionarios SET senha_mobile = ? WHERE id = ?', [senha, funcionarioId]);
+  const [func] = await query('SELECT pontomobile_id FROM funcionarios WHERE id = ? LIMIT 1', [funcionarioId]);
+  if (!func?.pontomobile_id) return false;
+  await syncFuncionario(funcionarioId, { enviarSenha: true });
+  return true;
+}
+
 // ── Sincronização em lote de funcionários ────────────────────────────────────
 
 /**
  * @param {(progresso: { total?: number, processados?: number, sincronizados?: number, erros?: object[] }) => void} [onProgress]
  *   Chamado a cada lote processado — usado por iniciarSyncAllFuncionarios para acompanhar o job em background.
  */
-export async function syncAllFuncionarios(empresaId, filialId = null, onProgress = null) {
+export async function syncAllFuncionarios(empresaId, { filialId = null, lotacaoId = null } = {}, onProgress = null) {
   let sql = 'SELECT id, filial_id, lotacao_id FROM funcionarios WHERE empresa_id = ? AND ativo = 1';
   const params = [empresaId];
   if (filialId) {
     sql += ' AND filial_id = ?';
     params.push(filialId);
+  }
+  if (lotacaoId) {
+    sql += ' AND lotacao_id = ?';
+    params.push(lotacaoId);
   }
   const funcs = await query(sql, params);
   onProgress?.({ total: funcs.length });
@@ -391,7 +497,7 @@ export async function syncAllFuncionarios(empresaId, filialId = null, onProgress
 const _syncJobs = new Map(); // jobId → { status, empresaId, total, processados, sincronizados, erros, erroGeral, iniciadoEm, finalizadoEm }
 const _JOB_TTL_MS = 60 * 60 * 1000; // limpa jobs concluídos há mais de 1h
 
-export function iniciarSyncAllFuncionarios(empresaId, filialId = null) {
+export function iniciarSyncAllFuncionarios(empresaId, { filialId = null, lotacaoId = null } = {}) {
   for (const [id, job] of _syncJobs) {
     if (job.empresaId === empresaId && job.status === 'em_andamento') {
       return { jobId: id, jaEmAndamento: true };
@@ -413,7 +519,7 @@ export function iniciarSyncAllFuncionarios(empresaId, filialId = null) {
   };
   _syncJobs.set(jobId, job);
 
-  syncAllFuncionarios(empresaId, filialId, (progresso) => Object.assign(job, progresso))
+  syncAllFuncionarios(empresaId, { filialId, lotacaoId }, (progresso) => Object.assign(job, progresso))
     .then((resultado) => {
       job.status = 'concluido';
       job.sincronizados = resultado.sincronizados;

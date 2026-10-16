@@ -159,14 +159,17 @@ export default async function cadastrosRoutes(fastify) {
   // DEPARTAMENTOS
   // ═══════════════════════════════════════════════════════════════════
 
+  // ?incluir_inativos=1 → também os inativos (tela de cadastro, para poder
+  // reativar). Sem o parâmetro, só ativos — é o que os selects usam.
   fastify.get('/departamentos', async (request) => {
+    const incluirInativos = request.query?.incluir_inativos === '1';
     const rows = await query(
       `SELECT d.*, COUNT(f.id) AS total_funcionarios
        FROM departamentos d
        LEFT JOIN funcionarios f ON f.departamento_id = d.id AND f.ativo = 1
-       WHERE d.empresa_id = ? AND d.ativo = 1
+       WHERE d.empresa_id = ?${incluirInativos ? '' : ' AND d.ativo = 1'}
        GROUP BY d.id
-       ORDER BY d.nome`,
+       ORDER BY d.ativo DESC, d.nome`,
       [request.empresaId]
     );
     return successResponse(rows);

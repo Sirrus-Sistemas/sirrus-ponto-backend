@@ -8,12 +8,29 @@ export async function authenticate(request, reply) {
   try {
     await request.jwtVerify();
   } catch (err) {
-    reply.code(401).send({
+    return reply.code(401).send({
       error: 'Não autorizado',
       message: 'Token inválido ou expirado',
     });
   }
+
+  // Senha definida por outra pessoa (admin/import/padrão do CPF): até o
+  // usuário trocar, o token só serve para trocar a senha — sem isso a troca
+  // obrigatória seria só um aviso na tela, contornável chamando a API direto.
+  if (request.user.trocar_senha && !ROTAS_LIBERADAS_TROCA_SENHA.has(request.routeOptions.url)) {
+    return reply.code(403).send({
+      error: 'Troca de senha obrigatória',
+      code: 'TROCAR_SENHA',
+      message: 'Troque sua senha para continuar.',
+    });
+  }
 }
+
+const ROTAS_LIBERADAS_TROCA_SENHA = new Set([
+  '/api/auth/change-password',
+  '/api/auth/logout',
+  '/api/funcionarios/me',
+]);
 
 /**
  * Factory: retorna middleware que verifica se o usuário tem uma das roles permitidas.

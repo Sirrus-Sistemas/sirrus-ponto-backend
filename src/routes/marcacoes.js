@@ -206,6 +206,7 @@ export default async function marcacaoRoutes(fastify) {
               ) AS hora_minuto
          FROM marcacoes
         WHERE funcionario_id = ?
+          AND desconsiderada = 0
           AND ABS(TIMESTAMPDIFF(SECOND,
                 CASE WHEN tipo = 'rep' THEN CONVERT_TZ(data_hora, ?, '+00:00') ELSE data_hora END,
                 ?)) < 60
@@ -633,8 +634,56 @@ export default async function marcacaoRoutes(fastify) {
       return reply.code(403).send({ error: 'Acesso negado', message: 'Marcação não pertence à sua empresa' });
     }
 
+    // Só batida lançada manualmente pode ser apagada. Relógio (REP) e
+    // aplicativo são o registro original — use desconsiderar (abaixo).
+    if (marcacao.tipo !== 'manual') {
+      return reply.code(422).send({
+        error: 'Batida original',
+        message: 'Batida do relógio ou do aplicativo não pode ser excluída. Use "Desconsiderar batida".',
+      });
+    }
+
     await MarcacaoRepository.deleteById(id);
     auditar({ acao: 'DELETE', tabela: 'marcacoes', registro_id: id, dados_anteriores: { data_hora: marcacao.data_hora, funcionario_id: marcacao.funcionario_id }, dados_novos: null, usuario_id: request.user.id, empresa_id: request.empresaId, ip: request.ip });
     return successResponse({ id }, 'Batida excluída');
   });
+
+  // ─── POST /marcacoes/:id/desconsiderar  |  /reconsiderar ──────────────
+  // Batida do relógio/aplicativo: tira (ou devolve) do cálculo sem apagar.
+  // A batida original continua gravada e aparece no espelho em "Marcações REP".
+  for (const [acao, valor] of [['desconsiderar', true], ['reconsiderar', false]]) {
+    fastify.post(`/marcacoes/:id/${acao}`, async (request, reply) => {
+      if (request.user.role !== 'admin' && request.user.role !== 'gestor') {
+        return reply.code(403).send({ error: 'Acesso negado', message: 'Sem permissão para alterar batidas' });
+      }
+      const id = parseInt(request.params.id, 10);
+      const marcacao = await MarcacaoRepository.findById(id);
+      if (!marcacao) {
+        return reply.code(404).send({ error: 'Não encontrado', message: 'Marcação não encontrada' });
+      }
+      const [func] = await query('SELECT empresa_id FROM funcionarios WHERE id = ? LIMIT 1', [marcacao.funcionario_id]);
+      if (!func || func.empresa_id !== request.empresaId) {
+        return reply.code(403).send({ error: 'Acesso negado', message: 'Marcação não pertence à sua empresa' });
+      }
+      if (marcacao.tipo === 'manual') {
+        return reply.code(422).send({
+          error: 'Batida manual',
+          message: 'Batida lançada manualmente não é desconsiderada — exclua a batida.',
+        });
+      }
+
+      await MarcacaoRepository.setDesconsiderada(id, valor, request.user.id);
+      auditar({
+        acao: 'UPDATE',
+        tabela: 'marcacoes',
+        registro_id: id,
+        dados_anteriores: { desconsiderada: Number(marcacao.desconsiderada) === 1 },
+        dados_novos: { desconsiderada: valor, data_hora: marcacao.data_hora },
+        usuario_id: request.user.id,
+        empresa_id: request.empresaId,
+        ip: request.ip,
+      });
+      return successResponse({ id }, valor ? 'Batida desconsiderada' : 'Batida reconsiderada');
+    });
+  }
 }

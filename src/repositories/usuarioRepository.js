@@ -12,7 +12,7 @@ export const UsuarioRepository = {
       `SELECT f.id, f.empresa_id, f.filial_id, f.nome, f.email, f.role, f.ativo,
               d.nome AS departamento_nome, t.nome AS turno_nome,
               fi.nome AS filial_nome,
-              u.senha_hash AS usuario_senha_hash
+              u.senha_hash AS usuario_senha_hash, u.trocar_senha
        FROM usuarios u
        INNER JOIN funcionarios f ON u.funcionario_id = f.id
        LEFT JOIN departamentos d ON f.departamento_id = d.id
@@ -40,21 +40,29 @@ export const UsuarioRepository = {
     return rows[0]?.funcionario_id ?? null;
   },
 
-  async updateSenhaHash(funcionarioId, senhaHash) {
-    await query('UPDATE usuarios SET senha_hash = ? WHERE funcionario_id = ?', [
+  /**
+   * `trocarSenha`: true quando a senha foi definida por outra pessoa (admin,
+   * import) — o usuário precisa trocar no próximo login; false quando é o
+   * próprio usuário escolhendo a senha (troca/recuperação).
+   */
+  async updateSenhaHash(funcionarioId, senhaHash, { trocarSenha = false } = {}) {
+    await query('UPDATE usuarios SET senha_hash = ?, trocar_senha = ? WHERE funcionario_id = ?', [
       senhaHash,
+      trocarSenha ? 1 : 0,
       funcionarioId,
     ]);
   },
+
 
   async updateCpf(funcionarioId, cpf11) {
     await query('UPDATE usuarios SET cpf = ? WHERE funcionario_id = ?', [cpf11, funcionarioId]);
   },
 
+  /** Toda senha criada aqui foi definida por outra pessoa — troca obrigatória no 1º acesso. */
   async insertForFuncionario(funcionarioId, cpf11, senhaHash) {
     await query(
-      `INSERT INTO usuarios (funcionario_id, cpf, senha_hash)
-       VALUES (?, ?, ?)`,
+      `INSERT INTO usuarios (funcionario_id, cpf, senha_hash, trocar_senha)
+       VALUES (?, ?, ?, 1)`,
       [funcionarioId, cpf11, senhaHash]
     );
   },

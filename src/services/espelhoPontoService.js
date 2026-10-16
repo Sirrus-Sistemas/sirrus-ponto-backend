@@ -638,7 +638,20 @@ export const EspelhoPontoService = {
     const noturnoInicioMin = parseHoraMin(lotacao?.hora_inicio_adicional_noturno);
 
     const dias = eachCalendarDay(year, month).map((data) => {
-      const raw = byDay.get(data) || [];
+      const doDia = byDay.get(data) || [];
+      // Batida desconsiderada (relógio/app — não pode ser apagada) fica fora de
+      // todo o cálculo e do tratamento; só volta separada no payload para a
+      // coluna "Marcações REP" do espelho e para poder ser reconsiderada.
+      const raw = doDia.filter((r) => Number(r.desconsiderada) !== 1);
+      const desconsideradas = doDia
+        .filter((r) => Number(r.desconsiderada) === 1)
+        .map((r) => ({
+          id: r.id,
+          data_hora: toIsoDataHoraUtc(r.data_hora),
+          data_hora_local: r.data_hora_local ?? toIsoDataHoraUtc(r.data_hora),
+          tipo: r.tipo,
+          tipo_label: TIPO_LABEL[r.tipo] || r.tipo,
+        }));
       const marcacoesRaw = raw.map((r) => ({
         id: r.id,
         data_hora: toIsoDataHoraUtc(r.data_hora),
@@ -694,7 +707,12 @@ export const EspelhoPontoService = {
         // cobrindo dias futuros) vale mesmo pra dias ainda não vividos — do contrário
         // ficava soterrada pelo status 'futuro' e nunca aparecia na ficha até o dia chegar.
         status = 'ocorrencia';
-        ehDiaTrabalho = true;
+        // A ocorrência só explica o dia — não transforma em dia de trabalho um
+        // feriado ou um dia de folga do turno/escala. Antes era sempre true:
+        // férias cobrindo o 07/09 davam previsto 480 e débito de 8h num
+        // feriado. Trabalho registrado nesses dias segue a regra de dia
+        // especial da lotação (calcExtrasDiaEspecial), como sem ocorrência.
+        ehDiaTrabalho = diaPrevisto && !feriado;
       } else if (isFuturo) {
         status = 'futuro';
       } else if (feriado) {
@@ -760,7 +778,17 @@ export const EspelhoPontoService = {
       // o motivo no Motivo da ficha — não entra na conta de jeito nenhum. O dia
       // calcula exatamente como se não houvesse ocorrência (batidas cruas vs
       // previsto), diferente da ocorrência normal de crédito/débito.
-      const ocorrenciaInformativa = status === 'ocorrencia' && ocorrencia?.informativa === 1;
+      //
+      // Exceção: crédito do dia inteiro sem batida nenhuma (férias, atestado...)
+      // não tem "débito natural" a preservar — marcado como informativa, virava
+      // falta e debitava a jornada inteira todo dia (ex.: férias de 15 dias =
+      // −104h). Nesse caso o crédito vale normalmente.
+      const creditoIntegralSemBatidas = ocorrenciaSemBatidas
+        && ocorrencia?.turno === 'integral'
+        && ocorrencia?.tipo_lancamento === 'credito';
+      const ocorrenciaInformativa = status === 'ocorrencia'
+        && Number(ocorrencia?.informativa) === 1
+        && !creditoIntegralSemBatidas;
 
       let minutos_previstos = null;
       let saldo_minutos = null;
@@ -1069,9 +1097,14 @@ export const EspelhoPontoService = {
               informativa: Number(ocorrencia.informativa) === 1,
             }
           : null,
+        marcacoes_desconsideradas: desconsideradas,
         ocorrencias: ocorrenciasDoDia.map((oc) => ({
           id: oc.id,
           tipo: oc.tipo,
+          // Período inteiro da ocorrência — excluir pelo menu de um dia apaga
+          // todos os dias dela, e a tela avisa isso na confirmação.
+          data_inicio: String(oc.data_inicio).slice(0, 10),
+          data_fim: String(oc.data_fim).slice(0, 10),
           descricao: oc.descricao || null,
           tipo_ocorrencia_descricao: oc.tipo_ocorrencia_descricao || null,
           tipo_lancamento: oc.tipo_lancamento || null,

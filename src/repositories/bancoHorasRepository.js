@@ -59,7 +59,7 @@ export const BancoHorasRepository = {
         LEFT JOIN banco_horas bh ON bh.funcionario_id = f.id AND (? IS NULL OR bh.mes_referencia <= ?)
         LEFT JOIN filiais fi ON fi.id = f.filial_id
         LEFT JOIN lotacoes lo ON lo.id = f.lotacao_id
-       WHERE f.empresa_id = ? AND f.ativo = 1 AND f.usa_banco_horas = 1
+       WHERE f.empresa_id = ? AND f.ativo = 1 AND f.usa_banco_horas = 1 AND f.controla_ponto = 1
     `;
     const params = [mesReferencia, mesReferencia, empresaId];
     if (filialId) { sql += ' AND f.filial_id = ?'; params.push(filialId); }

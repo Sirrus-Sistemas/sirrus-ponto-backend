@@ -3,6 +3,7 @@ import { EmpresaRepository } from '../repositories/empresaRepository.js';
 import { buscarPorPeriodo } from './escalaService.js';
 import { fusoHorarioToTzOffset, parseTzOffsetMs } from './espelhoPontoService.js';
 import { query } from '../config/database.js';
+import { minutosDaJornada, previstosSemBatida } from '../utils/jornada.js';
 
 const SLOT_FIELDS = ['entrada1', 'saida1', 'entrada2', 'saida2', 'entrada3', 'saida3', 'entrada4', 'saida4'];
 
@@ -26,23 +27,22 @@ function diaSemana(dataStr) {
   return new Date(y, m - 1, d).getDay();
 }
 
-function diaAnterior(dataStr) {
-  const [y, m, d] = dataStr.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d - 1));
-  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+/** Dias inteiros entre duas datas "YYYY-MM-DD" (b − a). */
+function diasEntre(a, b) {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
 }
 
 /**
- * Converte horário local "HH:MM" numa data de referência para data_hora UTC
- * ("YYYY-MM-DD HH:MM:SS"). Madrugada (hora < 6) pertence ao dia UTC anterior —
- * mesma regra usada no lançamento de célula única (JustificativaManualModal /
- * PunchGrid.handleJustificativaAutomatica no frontend).
+ * Converte horário local "HH:MM" para data_hora UTC ("YYYY-MM-DD HH:MM:SS").
+ * A batida fica no dia de referência; `diasAMais` = 1 quando a jornada já
+ * passou da meia-noite (ver minutosDaJornada). Antes, toda hora < 06:00 ia
+ * para o dia ANTERIOR — a saída da madrugada ficava antes da própria entrada.
+ * Mesma regra do frontend (batidaDataHora.ts).
  */
-function horaLocalParaUtc(horaStr, dataRef, tzOffsetMs) {
+function horaLocalParaUtc(horaStr, dataRef, tzOffsetMs, diasAMais = 0) {
   const [hh, mm] = horaStr.slice(0, 5).split(':').map(Number);
-  const dataBase = hh < 6 ? diaAnterior(dataRef) : dataRef;
-  const [y, m, d] = dataBase.split('-').map(Number);
-  const localNaiveMs = Date.UTC(y, m - 1, d, hh, mm, 0);
+  const [y, m, d] = dataRef.split('-').map(Number);
+  const localNaiveMs = Date.UTC(y, m - 1, d + diasAMais, hh, mm, 0);
   const utcMs = localNaiveMs - tzOffsetMs;
   return new Date(utcMs).toISOString().replace('T', ' ').slice(0, 19);
 }
@@ -100,11 +100,17 @@ export const JustificativaPeriodoService = {
 
     const bloqueadoSet = new Set(bloqueadosRows.map((r) => r.data));
 
+    // Por dia: horários "HH:MM" (modo manual, igualdade exata) e minutos desde
+    // a meia-noite do dia de referência (modo automático, casamento por
+    // proximidade — batida da madrugada seguinte conta +24h).
     const existentesPorDia = new Map();
     for (const row of existentesRows) {
       const dia = String(row.dia).slice(0, 10);
-      if (!existentesPorDia.has(dia)) existentesPorDia.set(dia, new Set());
-      existentesPorDia.get(dia).add(String(row.data_hora_local).slice(11, 16));
+      const local = String(row.data_hora_local);
+      if (!existentesPorDia.has(dia)) existentesPorDia.set(dia, { horas: new Set(), minutos: [] });
+      const e = existentesPorDia.get(dia);
+      e.horas.add(local.slice(11, 16));
+      e.minutos.push(diasEntre(dia, local.slice(0, 10)) * 1440 + Number(local.slice(11, 13)) * 60 + Number(local.slice(14, 16)));
     }
 
     const escalaMap = new Map();
@@ -146,23 +152,32 @@ export const JustificativaPeriodoService = {
         }
       }
 
-      const existentes = existentesPorDia.get(data) ?? new Set();
+      const existentes = existentesPorDia.get(data) ?? { horas: new Set(), minutos: [] };
 
       // Manual: cada horário mantém sua posição fixa (slot_override = índice E1..S4).
-      // Automático: casa por ORDEM/CONTAGEM, não por igualdade exata de minuto — o
-      // funcionário quase nunca bate ponto no minuto exato previsto pela escala/turno,
-      // então comparar "horário previsto === horário real" nunca reconhecia a batida já
-      // existente e lançava a jornada inteira por cima (inclusive a 1ª batida real),
-      // virando uma batida extra em vez de completar só o que faltava. Já existem N
-      // batidas reais nesse dia → pula os N primeiros horários previstos (cronológicos)
-      // e lança só os restantes.
-      const alvosFinal = modo === 'manual'
-        ? SLOT_FIELDS
-            .map((campo, idx) => ({ hora: horariosManuais?.[campo]?.slice(0, 5), slotOverride: idx }))
-            .filter((a) => a.hora && !existentes.has(a.hora))
-        : horariosAlvo
-            .slice(existentes.size)
-            .map((h) => ({ hora: h, slotOverride: null }));
+      // Automático: cada batida real é casada com o horário previsto mais próximo
+      // (mantendo a ordem) e só os previstos que sobram são lançados — o funcionário
+      // quase nunca bate no minuto exato, e a falta pode ser no meio do dia.
+      // Antes pulava os N primeiros previstos (N = nº de batidas): faltando a saída
+      // do almoço (08:00, 14:00, 18:00), lançava um segundo 18:00 em vez do 12:00.
+      let alvosFinal;
+      if (modo === 'manual') {
+        const preenchidos = SLOT_FIELDS
+          .map((campo, idx) => ({ hora: horariosManuais?.[campo]?.slice(0, 5), slotOverride: idx }))
+          .filter((a) => a.hora);
+        const minutos = minutosDaJornada(preenchidos.map((a) => a.hora));
+        alvosFinal = preenchidos
+          .map((a, i) => ({ ...a, diasAMais: Math.floor(minutos[i] / 1440) }))
+          .filter((a) => !existentes.horas.has(a.hora));
+      } else {
+        const minutosPrevistos = minutosDaJornada(horariosAlvo);
+        const minutosReais = [...existentes.minutos].sort((a, b) => a - b);
+        alvosFinal = previstosSemBatida(minutosPrevistos, minutosReais).map((i) => ({
+          hora: horariosAlvo[i],
+          slotOverride: null,
+          diasAMais: Math.floor(minutosPrevistos[i] / 1440),
+        }));
+      }
 
       if (alvosFinal.length === 0) {
         diasJaCompletos += 1;
@@ -171,7 +186,7 @@ export const JustificativaPeriodoService = {
 
       diasLancados += 1;
       for (const alvo of alvosFinal) {
-        const dataHoraUtc = horaLocalParaUtc(alvo.hora, data, tzOffsetMs);
+        const dataHoraUtc = horaLocalParaUtc(alvo.hora, data, tzOffsetMs, alvo.diasAMais);
         tuplas.push([
           funcionario.id,
           dataHoraUtc,

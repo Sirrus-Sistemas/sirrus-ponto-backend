@@ -1,5 +1,6 @@
 import { authenticate, authorize, empresaScope } from '../middlewares/auth.js';
-import { successResponse } from '../utils/helpers.js';
+import { paginatedResponse, parsePagination, successResponse } from '../utils/helpers.js';
+import { documentoInvalido } from '../utils/cpf.js';
 import { RelogioRepository } from '../repositories/relogioRepository.js';
 import { RelogioSyncRepository } from '../repositories/relogioSyncRepository.js';
 import { RelogioMarcacaoRepository } from '../repositories/relogioMarcacaoRepository.js';
@@ -185,6 +186,14 @@ export default async function relogiosRoutes(fastify) {
 
     const resultados = [];
     for (const m of marcacoes) {
+      // CPF/PIS com letra não é batida: é registro de cadastro de empregado
+      // do AFD (tipo 5 — operação I/A/E + PIS) lido pelo sistema de coleta
+      // nas posições de uma marcação. Não grava; volta 'ignorada' para o
+      // coletor seguir em frente.
+      if (documentoInvalido(m.pis) || documentoInvalido(m.cpf)) {
+        resultados.push({ nsr: m.nsr, status: 'ignorada' });
+        continue;
+      }
       const funcionarioId = (m.cpf || m.pis)
         ? await FuncionarioRepository.findByCpfOuPis(request.empresaId, { cpf: m.cpf, pis: m.pis })
         : null;
@@ -206,11 +215,14 @@ export default async function relogiosRoutes(fastify) {
   // ── GET /api/relogios/marcacoes/pendentes?relogio_id=X&search=  (tela de reconciliação)
   fastify.get('/relogios/marcacoes/pendentes', { preHandler: [authorize('admin')] }, async (request) => {
     const relogioId = request.query.relogio_id ? Number(request.query.relogio_id) : undefined;
-    const pendentes = await RelogioMarcacaoRepository.listarPendentes(request.empresaId, {
+    const { page, limit, offset } = parsePagination(request.query);
+    const { rows, total } = await RelogioMarcacaoRepository.listarPendentes(request.empresaId, {
       relogioId,
       search: request.query.search || undefined,
+      limit,
+      offset,
     });
-    return successResponse(pendentes);
+    return paginatedResponse(rows, total, page, limit);
   });
 
   // ── POST /api/relogios/marcacoes/:id/vincular  (tela de reconciliação)

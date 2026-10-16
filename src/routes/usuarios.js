@@ -2,6 +2,9 @@ import bcrypt from 'bcryptjs';
 import { authenticate, authorize, empresaScope } from '../middlewares/auth.js';
 import { query } from '../config/database.js';
 import { successResponse } from '../utils/helpers.js';
+import { MSG_INATIVAR_PROPRIO_USUARIO } from '../config/constants.js';
+import { UsuarioRepository } from '../repositories/usuarioRepository.js';
+import { AuthService, motivoSenhaFraca } from '../services/authService.js';
 
 export default async function usuariosRoutes(fastify) {
   fastify.addHook('preHandler', authenticate);
@@ -13,7 +16,7 @@ export default async function usuariosRoutes(fastify) {
   }, async (request) => {
     const rows = await query(
       `SELECT f.id, f.nome, f.email, f.role, f.ativo AS funcionario_ativo,
-              u.cpf, u.ativo AS usuario_ativo,
+              u.cpf, u.ativo AS usuario_ativo, u.trocar_senha,
               CASE WHEN u.funcionario_id IS NOT NULL THEN 1 ELSE 0 END AS tem_acesso,
               f.lotacao_id,
               l.nome AS lotacao_nome
@@ -60,11 +63,11 @@ export default async function usuariosRoutes(fastify) {
     const [cpfExists] = await query('SELECT cpf FROM usuarios WHERE cpf = ?', [cpf]);
     if (cpfExists) return reply.code(409).send({ error: 'Este CPF já está cadastrado para outro usuário' });
 
+    const motivoSenha = motivoSenhaFraca(senha, cpf);
+    if (motivoSenha) return reply.code(422).send({ error: motivoSenha });
+
     const senhaHash = await bcrypt.hash(senha, 10);
-    await query(
-      'INSERT INTO usuarios (funcionario_id, cpf, senha_hash) VALUES (?, ?, ?)',
-      [funcionarioId, cpf, senhaHash]
-    );
+    await UsuarioRepository.insertForFuncionario(funcionarioId, cpf, senhaHash);
     await query('UPDATE funcionarios SET role = ? WHERE id = ?', [role, funcionarioId]);
 
     return reply.code(201).send(successResponse(null, 'Acesso criado com sucesso'));
@@ -88,6 +91,10 @@ export default async function usuariosRoutes(fastify) {
     const funcionarioId = parseInt(request.params.funcionarioId, 10);
     const { role, nova_senha, ativo, cpf } = request.body;
 
+    if (ativo === 0 && funcionarioId === request.user.id) {
+      return reply.code(422).send({ error: MSG_INATIVAR_PROPRIO_USUARIO, message: MSG_INATIVAR_PROPRIO_USUARIO });
+    }
+
     const [func] = await query(
       'SELECT id FROM funcionarios WHERE id = ? AND empresa_id = ?',
       [funcionarioId, request.empresaId]
@@ -102,7 +109,11 @@ export default async function usuariosRoutes(fastify) {
     const usuarioValues = [];
 
     if (nova_senha) {
-      usuarioFields.push('senha_hash = ?');
+      const [atual] = await query('SELECT cpf FROM usuarios WHERE funcionario_id = ?', [funcionarioId]);
+      const motivoSenha = motivoSenhaFraca(nova_senha, cpf ?? atual?.cpf);
+      if (motivoSenha) return reply.code(422).send({ error: motivoSenha });
+      // Senha definida pelo admin: o usuário troca no próximo login.
+      usuarioFields.push('senha_hash = ?', 'trocar_senha = 1');
       usuarioValues.push(await bcrypt.hash(nova_senha, 10));
     }
     if (ativo !== undefined) {
@@ -126,6 +137,7 @@ export default async function usuariosRoutes(fastify) {
         usuarioValues
       );
     }
+    if (nova_senha || ativo === 0) await AuthService.revokeAllTokens(funcionarioId);
 
     return successResponse(null, 'Acesso atualizado');
   });
@@ -136,6 +148,10 @@ export default async function usuariosRoutes(fastify) {
   }, async (request, reply) => {
     const funcionarioId = parseInt(request.params.funcionarioId, 10);
 
+    if (funcionarioId === request.user.id) {
+      return reply.code(422).send({ error: MSG_INATIVAR_PROPRIO_USUARIO, message: MSG_INATIVAR_PROPRIO_USUARIO });
+    }
+
     const [func] = await query(
       'SELECT id FROM funcionarios WHERE id = ? AND empresa_id = ?',
       [funcionarioId, request.empresaId]
@@ -143,6 +159,7 @@ export default async function usuariosRoutes(fastify) {
     if (!func) return reply.code(404).send({ error: 'Funcionário não encontrado' });
 
     await query('UPDATE usuarios SET ativo = 0 WHERE funcionario_id = ?', [funcionarioId]);
+    await AuthService.revokeAllTokens(funcionarioId);
     return successResponse(null, 'Acesso revogado');
   });
 }

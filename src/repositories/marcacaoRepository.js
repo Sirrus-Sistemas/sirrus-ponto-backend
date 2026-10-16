@@ -48,7 +48,7 @@ export const MarcacaoRepository = {
    */
   async findById(id) {
     const rows = await query(
-      `SELECT id, funcionario_id, data_hora, tipo, motivo_edicao, original, slot_override
+      `SELECT id, funcionario_id, data_hora, tipo, motivo_edicao, original, slot_override, desconsiderada
          FROM marcacoes WHERE id = ? LIMIT 1`,
       [id],
     );
@@ -88,6 +88,16 @@ export const MarcacaoRepository = {
 
     params.push(id);
     await query(`UPDATE marcacoes SET ${sets.join(', ')} WHERE id = ?`, params);
+  },
+
+  /** Marca/desmarca batida como desconsiderada (fica gravada, sai do cálculo). */
+  async setDesconsiderada(id, desconsiderada, usuarioId) {
+    await query(
+      `UPDATE marcacoes
+          SET desconsiderada = ?, desconsiderada_por = ?, desconsiderada_em = ?
+        WHERE id = ?`,
+      desconsiderada ? [1, usuarioId, new Date(), id] : [0, null, null, id],
+    );
   },
 
   async deleteById(id) {
@@ -148,6 +158,7 @@ export const MarcacaoRepository = {
               motivo_edicao,
               original,
               slot_override,
+              desconsiderada,
               COALESCE(
                 DATE_FORMAT(dia_referencia, '%Y-%m-%d'),
                 DATE_FORMAT(
@@ -209,6 +220,7 @@ export const MarcacaoRepository = {
               ) AS dia
          FROM marcacoes
         WHERE funcionario_id = ?
+          AND desconsiderada = 0
           AND (
             (DATE(CASE WHEN tipo = 'rep' THEN DATE_SUB(data_hora, INTERVAL ? HOUR)
                        ELSE CONVERT_TZ(DATE_SUB(data_hora, INTERVAL ? HOUR), '+00:00', ?)

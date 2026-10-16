@@ -4,6 +4,43 @@ import { query } from '../config/database.js';
 import { UsuarioRepository } from '../repositories/usuarioRepository.js';
 import { onlyCpfDigits } from '../utils/cpf.js';
 
+/**
+ * Senha que é o CPF ou um pedaço dele (ex.: os 6 primeiros dígitos, padrão do
+ * import da planilha) — quem sabe o CPF entra na conta.
+ */
+export function senhaDerivadaDoCpf(senha, cpf) {
+  const cpfDigits = onlyCpfDigits(cpf);
+  const s = String(senha ?? '');
+  if (cpfDigits.length !== 11 || !/^[\d.\-\s]+$/.test(s)) return false;
+  const senhaDigits = s.replace(/\D/g, '');
+  return senhaDigits.length >= 4 && cpfDigits.includes(senhaDigits);
+}
+
+const SENHAS_COMUNS = new Set([
+  'senha', 'senha1', 'senha12', 'senha123', 'senha1234', 'password', 'qwerty', 'qwerty123',
+  'abc123', 'abc1234', 'mudar123', 'mudar@123', 'admin', 'admin123', 'sirrus', 'sirrus123',
+]);
+
+/**
+ * Senha que qualquer um adivinha: derivada do CPF, um caractere repetido
+ * (111111), sequência (123456, 654321, abcdef) ou da lista das mais comuns.
+ * Retorna o motivo (para mostrar ao usuário) ou null se a senha serve.
+ */
+export function motivoSenhaFraca(senha, cpf) {
+  const s = String(senha ?? '');
+  if (s.length < 6) return 'A senha deve ter pelo menos 6 caracteres.';
+  if (senhaDerivadaDoCpf(s, cpf)) return 'A senha não pode ser o CPF nem parte dele.';
+  const lower = s.toLowerCase();
+  if (/^(.)\1+$/.test(lower)) return 'A senha não pode ser um mesmo caractere repetido.';
+  const codes = [...lower].map((ch) => ch.charCodeAt(0));
+  const passo = codes[1] - codes[0];
+  if (Math.abs(passo) === 1 && codes.every((c, i) => i === 0 || c - codes[i - 1] === passo)) {
+    return 'A senha não pode ser uma sequência (ex.: 123456, abcdef).';
+  }
+  if (SENHAS_COMUNS.has(lower)) return 'Essa senha é muito comum. Escolha outra.';
+  return null;
+}
+
 export const AuthService = {
   /**
    * Autentica somente por CPF (11 dígitos) e senha, via tabela `usuarios`.
@@ -28,6 +65,13 @@ export const AuthService = {
 
     delete row.usuario_senha_hash;
 
+    // Troca obrigatória só para senhas NOVAS definidas por outra pessoa
+    // (cadastro, import, redefinição pelo admin — ver trocar_senha). Contas
+    // que já existiam não são marcadas aqui no login, mesmo com a senha
+    // padrão do CPF: forçar a troca para todo mundo de uma vez geraria uma
+    // onda de chamados no suporte.
+    const trocarSenha = Boolean(row.trocar_senha);
+
     return {
       id: row.id,
       empresa_id: row.empresa_id,
@@ -38,6 +82,7 @@ export const AuthService = {
       departamento_nome: row.departamento_nome,
       turno_nome: row.turno_nome,
       filial_nome: row.filial_nome ?? null,
+      trocar_senha: trocarSenha,
     };
   },
 
@@ -61,9 +106,11 @@ export const AuthService = {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
     const rows = await query(
-      `SELECT rt.*, f.email, f.role, f.empresa_id, f.filial_id, f.nome, f.ativo
+      `SELECT rt.*, f.email, f.role, f.empresa_id, f.filial_id, f.nome, f.ativo,
+              u.ativo AS usuario_ativo, u.trocar_senha
        FROM refresh_tokens rt
        JOIN funcionarios f ON rt.funcionario_id = f.id
+       JOIN usuarios u ON u.funcionario_id = f.id
        WHERE rt.token_hash = ? AND rt.revoked = 0 AND rt.expires_at > NOW()
        LIMIT 1`,
       [tokenHash]
@@ -75,7 +122,7 @@ export const AuthService = {
 
     const row = rows[0];
 
-    if (!row.ativo) {
+    if (!row.ativo || !row.usuario_ativo) {
       throw Object.assign(new Error('Usuário inativo'), { statusCode: 403 });
     }
 
@@ -89,6 +136,7 @@ export const AuthService = {
       nome: row.nome,
       email: row.email,
       role: row.role,
+      trocar_senha: Boolean(row.trocar_senha),
     };
   },
 
@@ -107,7 +155,7 @@ export const AuthService = {
    */
   async changePassword(funcionarioId, currentPassword, newPassword) {
     const rows = await query(
-      'SELECT senha_hash FROM usuarios WHERE funcionario_id = ? AND ativo = 1',
+      'SELECT senha_hash, cpf FROM usuarios WHERE funcionario_id = ? AND ativo = 1',
       [funcionarioId]
     );
 
@@ -118,6 +166,13 @@ export const AuthService = {
     const senhaCorreta = await bcrypt.compare(currentPassword, rows[0].senha_hash);
     if (!senhaCorreta) {
       throw Object.assign(new Error('Senha atual incorreta'), { statusCode: 400 });
+    }
+    if (newPassword === currentPassword) {
+      throw Object.assign(new Error('A nova senha precisa ser diferente da atual'), { statusCode: 400 });
+    }
+    const motivoNova = motivoSenhaFraca(newPassword, rows[0].cpf);
+    if (motivoNova) {
+      throw Object.assign(new Error(motivoNova), { statusCode: 400 });
     }
 
     const novaHash = await bcrypt.hash(newPassword, 10);
@@ -191,6 +246,11 @@ export const AuthService = {
     }
 
     const row = rows[0];
+    const [usuario] = await query('SELECT cpf FROM usuarios WHERE funcionario_id = ?', [row.funcionario_id]);
+    const motivo = motivoSenhaFraca(newPassword, usuario?.cpf);
+    if (motivo) {
+      throw Object.assign(new Error(motivo), { statusCode: 400 });
+    }
     const novaHash = await bcrypt.hash(newPassword, 10);
 
     await UsuarioRepository.updateSenhaHash(row.funcionario_id, novaHash);

@@ -1,7 +1,39 @@
 import { query } from '../config/database.js';
 import { MarcacaoRepository } from './marcacaoRepository.js';
+import { chaveDocumento, sqlChaveDocumento } from '../utils/cpf.js';
 
 const LOTE = 500;
+
+/**
+ * Mapa chave-de-documento → funcionario_id com CPF e PIS de todos os
+ * funcionários da empresa (inclusive inativos: batida antiga de ex-funcionário
+ * também precisa ir pra ficha dele). Chave normalizada (ver chaveDocumento)
+ * e cruzada — o "PIS" do relógio pode ser o CPF. Ativo prevalece se houver
+ * colisão.
+ */
+async function mapaDocumentos(empresaId) {
+  const funcs = await query(
+    'SELECT id, cpf, pis FROM funcionarios WHERE empresa_id = ? ORDER BY ativo ASC, id ASC',
+    [empresaId],
+  );
+  const mapa = new Map();
+  for (const f of funcs) {
+    for (const doc of [f.cpf, f.pis]) {
+      const chave = chaveDocumento(doc);
+      if (chave) mapa.set(chave, f.id);
+    }
+  }
+  return mapa;
+}
+
+/** funcionario_id da marcação pelo CPF (prioridade) ou PIS, ou null. */
+function buscarFuncionario(mapa, { cpf, pis }) {
+  for (const doc of [cpf, pis]) {
+    const id = mapa.get(chaveDocumento(doc));
+    if (id) return id;
+  }
+  return null;
+}
 
 function chunk(arr, size) {
   const out = [];
@@ -28,13 +60,7 @@ export const RelogioMarcacaoRepository = {
   async importarLote({ relogioId, empresaId, marcacoes }) {
     if (marcacoes.length === 0) return { total_linhas: 0, inserida: 0, duplicada: 0, pendente: 0 };
 
-    const funcs = await query('SELECT id, cpf, pis FROM funcionarios WHERE empresa_id = ?', [empresaId]);
-    const porCpf = new Map();
-    const porPis = new Map();
-    for (const f of funcs) {
-      if (f.cpf) porCpf.set(String(f.cpf).replace(/\D/g, ''), f.id);
-      if (f.pis) porPis.set(String(f.pis).replace(/\D/g, ''), f.id);
-    }
+    const mapa = await mapaDocumentos(empresaId);
 
     const existentes = await query('SELECT nsr FROM relogio_marcacoes_importadas WHERE relogio_id = ?', [relogioId]);
     const nsrConhecidos = new Set(existentes.map((r) => r.nsr));
@@ -43,10 +69,7 @@ export const RelogioMarcacaoRepository = {
     const duplicadas = marcacoes.length - novas.length;
 
     for (const m of novas) {
-      let funcionarioId = null;
-      if (m.cpf) funcionarioId = porCpf.get(String(m.cpf).replace(/\D/g, '')) ?? null;
-      if (!funcionarioId && m.pis) funcionarioId = porPis.get(String(m.pis).replace(/\D/g, '')) ?? null;
-      m.funcionarioId = funcionarioId;
+      m.funcionarioId = buscarFuncionario(mapa, m);
     }
 
     const comFuncionario = novas.filter((m) => m.funcionarioId);
@@ -170,16 +193,17 @@ export const RelogioMarcacaoRepository = {
   async vincularPendentes(empresaId, funcionarioId, { cpf, pis }) {
     if (!cpf && !pis) return 0;
 
-    const condicoes = [];
-    const params = [];
-    if (cpf) {
-      condicoes.push('rmi.cpf = ?');
-      params.push(cpf);
-    }
-    if (pis) {
-      condicoes.push('rmi.pis = ?');
-      params.push(pis);
-    }
+    // Chave normalizada e cruzada (CPF do cadastro pode estar no "PIS" do
+    // relógio e vice-versa) — antes era igualdade exata do texto, e um PIS
+    // com máscara ou 11 vs 12 dígitos nunca vinculava sozinho.
+    const chaves = [...new Set([cpf, pis].map(chaveDocumento).filter(Boolean))];
+    if (chaves.length === 0) return 0;
+    const ph = chaves.map(() => '?').join(', ');
+    const condicoes = [
+      `${sqlChaveDocumento('rmi.cpf')} IN (${ph})`,
+      `${sqlChaveDocumento('rmi.pis')} IN (${ph})`,
+    ];
+    const params = [...chaves, ...chaves];
 
     const pendentes = await query(
       `SELECT rmi.id, rmi.relogio_id, rmi.nsr, rmi.data_hora
@@ -206,16 +230,7 @@ export const RelogioMarcacaoRepository = {
    * mesmo com o cadastro já certo. Retorna quantas foram vinculadas agora.
    */
   async revalidarTodos(empresaId) {
-    const funcs = await query(
-      'SELECT id, cpf, pis FROM funcionarios WHERE empresa_id = ? AND ativo = 1',
-      [empresaId],
-    );
-    const porCpf = new Map();
-    const porPis = new Map();
-    for (const f of funcs) {
-      if (f.cpf) porCpf.set(String(f.cpf).replace(/\D/g, ''), f.id);
-      if (f.pis) porPis.set(String(f.pis).replace(/\D/g, ''), f.id);
-    }
+    const mapa = await mapaDocumentos(empresaId);
 
     const pendentes = await query(
       `SELECT rmi.id, rmi.cpf, rmi.pis
@@ -227,9 +242,7 @@ export const RelogioMarcacaoRepository = {
 
     let vinculadas = 0;
     for (const p of pendentes) {
-      let funcionarioId = null;
-      if (p.cpf) funcionarioId = porCpf.get(String(p.cpf).replace(/\D/g, '')) ?? null;
-      if (!funcionarioId && p.pis) funcionarioId = porPis.get(String(p.pis).replace(/\D/g, '')) ?? null;
+      const funcionarioId = buscarFuncionario(mapa, p);
       if (!funcionarioId) continue;
       if (await this.vincular(p.id, funcionarioId)) vinculadas++;
     }
@@ -240,7 +253,7 @@ export const RelogioMarcacaoRepository = {
    * Lista marcações pendentes (sem funcionário vinculado) desta empresa,
    * para a tela de reconciliação manual.
    */
-  async listarPendentes(empresaId, { relogioId, search } = {}) {
+  async listarPendentes(empresaId, { relogioId, search, limit = 50, offset = 0 } = {}) {
     const condicoes = ['r.empresa_id = ?', "rmi.status = 'pendente'"];
     const params = [empresaId];
     if (relogioId) {
@@ -252,16 +265,29 @@ export const RelogioMarcacaoRepository = {
       params.push(`%${search}%`, `%${search}%`);
     }
 
-    return query(
-      `SELECT rmi.id, rmi.relogio_id, r.descricao AS relogio_descricao, rmi.nsr,
-              rmi.cpf, rmi.pis, rmi.data_hora, rmi.criado_em
-       FROM relogio_marcacoes_importadas rmi
-       JOIN relogios_ponto r ON r.id = rmi.relogio_id
-       WHERE ${condicoes.join(' AND ')}
-       ORDER BY rmi.data_hora DESC
-       LIMIT 500`,
-      params,
-    );
+    // Paginado com total — antes eram 500 linhas fixas sem indicação de que
+    // havia mais (há empresas com dezenas de milhares de pendentes).
+    const where = condicoes.join(' AND ');
+    const [rows, [{ total }]] = await Promise.all([
+      query(
+        `SELECT rmi.id, rmi.relogio_id, r.descricao AS relogio_descricao, rmi.nsr,
+                rmi.cpf, rmi.pis, rmi.data_hora, rmi.criado_em
+         FROM relogio_marcacoes_importadas rmi
+         JOIN relogios_ponto r ON r.id = rmi.relogio_id
+         WHERE ${where}
+         ORDER BY rmi.data_hora DESC
+         LIMIT ${Number(limit)} OFFSET ${Number(offset)}`,
+        params,
+      ),
+      query(
+        `SELECT COUNT(*) AS total
+         FROM relogio_marcacoes_importadas rmi
+         JOIN relogios_ponto r ON r.id = rmi.relogio_id
+         WHERE ${where}`,
+        params,
+      ),
+    ]);
+    return { rows, total: Number(total) };
   },
 
   /** Vincula manualmente uma marcação pendente a um funcionário. */

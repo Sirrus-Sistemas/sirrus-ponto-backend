@@ -2,10 +2,11 @@ import { authenticate, authorize, empresaScope } from '../middlewares/auth.js';
 import { query } from '../config/database.js';
 import { FuncionarioRepository } from '../repositories/funcionarioRepository.js';
 import { UsuarioRepository } from '../repositories/usuarioRepository.js';
-import { AuthService } from '../services/authService.js';
-import { onlyCpfDigits } from '../utils/cpf.js';
+import { AuthService, motivoSenhaFraca } from '../services/authService.js';
+import { cpfValido, onlyCpfDigits, pisValido } from '../utils/cpf.js';
 import { parsePagination, paginatedResponse, successResponse } from '../utils/helpers.js';
 import { auditar } from '../services/auditService.js';
+import { MSG_INATIVAR_PROPRIO_USUARIO } from '../config/constants.js';
 import { RelogioSyncRepository } from '../repositories/relogioSyncRepository.js';
 import { RelogioMarcacaoRepository } from '../repositories/relogioMarcacaoRepository.js';
 import { gerarModeloFuncionarios, importarFuncionarios } from '../services/importFuncionariosService.js';
@@ -13,7 +14,7 @@ import { gerarModeloFuncionarios, importarFuncionarios } from '../services/impor
 const createSchema = {
   body: {
     type: 'object',
-    required: ['nome', 'email', 'cpf', 'data_admissao', 'password'],
+    required: ['nome', 'email', 'cpf', 'password'],
     properties: {
       nome: { type: 'string', minLength: 3 },
       email: { type: 'string', format: 'email' },
@@ -21,8 +22,10 @@ const createSchema = {
       telefone: { type: 'string' },
       cargo: { type: 'string' },
       matricula: { type: 'string' },
-      data_admissao: { type: 'string', format: 'date' },
+      data_admissao: { type: ['string', 'null'], format: 'date' },
+      data_nascimento: { type: ['string', 'null'], format: 'date' },
       pis: { type: 'string' },
+      rg: { type: ['string', 'null'], maxLength: 30 },
       filial_id: { type: 'integer' },
       departamento_id: { type: 'integer' },
       turno_id: { type: 'integer' },
@@ -31,6 +34,7 @@ const createSchema = {
       role: { type: 'string', enum: ['admin', 'gestor', 'funcionario'] },
       usa_escala: { type: 'integer', minimum: 0, maximum: 1 },
       usa_banco_horas: { type: 'integer', minimum: 0, maximum: 1 },
+      controla_ponto: { type: 'integer', minimum: 0, maximum: 1 },
       usa_mobile: { type: 'integer', minimum: 0, maximum: 1 },
       admin_ponto_mobile: { type: 'integer', minimum: 0, maximum: 1 },
       password: { type: 'string', minLength: 6 },
@@ -57,7 +61,9 @@ const updateSchema = {
       cargo: { type: ['string', 'null'] },
       matricula: { type: ['string', 'null'] },
       pis: { type: ['string', 'null'] },
-      data_admissao: { type: 'string', format: 'date' },
+      rg: { type: ['string', 'null'], maxLength: 30 },
+      data_admissao: { type: ['string', 'null'], format: 'date' },
+      data_nascimento: { type: ['string', 'null'], format: 'date' },
       filial_id: { type: ['integer', 'null'] },
       departamento_id: { type: ['integer', 'null'] },
       turno_id: { type: ['integer', 'null'] },
@@ -66,6 +72,7 @@ const updateSchema = {
       role: { type: 'string', enum: ['admin', 'gestor', 'funcionario'] },
       usa_escala: { type: 'integer', minimum: 0, maximum: 1 },
       usa_banco_horas: { type: 'integer', minimum: 0, maximum: 1 },
+      controla_ponto: { type: 'integer', minimum: 0, maximum: 1 },
       usa_mobile: { type: 'integer', minimum: 0, maximum: 1 },
       admin_ponto_mobile: { type: 'integer', minimum: 0, maximum: 1 },
       ativo: { type: 'integer', minimum: 0, maximum: 1 },
@@ -86,6 +93,54 @@ const updateSchema = {
   },
 };
 
+/**
+ * Regras do cadastro que o JSON schema não cobre. `anterior` é o funcionário
+ * atual na edição (null na criação): CPF/PIS só são checados quando mudam —
+ * há cadastros antigos com documento inválido que não podem travar a edição
+ * de outros campos — e Filial/Turno só quando vêm no corpo (o PUT também é
+ * usado para mudanças parciais, ex.: só `ativo`).
+ * Retorna a mensagem de erro ou null.
+ */
+function validarFuncionario(dados, anterior = null) {
+  const criando = anterior === null;
+  const cpfFinal = dados.cpf !== undefined ? onlyCpfDigits(dados.cpf) : onlyCpfDigits(anterior?.cpf);
+
+  if (dados.cpf !== undefined && (criando || cpfFinal !== onlyCpfDigits(anterior.cpf)) && !cpfValido(cpfFinal)) {
+    return 'CPF inválido. Confira os dígitos.';
+  }
+
+  const pis = dados.pis ? String(dados.pis).trim() : '';
+  if (pis && (criando || pis !== String(anterior.pis ?? '').trim()) && !pisValido(pis, cpfFinal)) {
+    return 'PIS inválido. Informe um PIS/PASEP válido ou o CPF do funcionário.';
+  }
+
+  if (dados.data_nascimento) {
+    const hoje = new Date().toISOString().slice(0, 10);
+    if (dados.data_nascimento >= hoje) return 'A data de nascimento precisa estar no passado.';
+    if (dados.data_nascimento < '1900-01-01') return 'Data de nascimento inválida.';
+  }
+
+  if ((criando || 'filial_id' in dados) && !dados.filial_id) {
+    return 'Selecione a filial do funcionário.';
+  }
+
+  const controlaPonto = 'controla_ponto' in dados ? dados.controla_ponto : (anterior?.controla_ponto ?? 1);
+  if (Number(controlaPonto) !== 0 && (criando || 'turno_id' in dados || 'usa_escala' in dados || 'controla_ponto' in dados)) {
+    const turno = 'turno_id' in dados ? dados.turno_id : anterior?.turno_id;
+    const escala = 'usa_escala' in dados ? dados.usa_escala : anterior?.usa_escala;
+    // Sem turno (e sem escala) o espelho conta falta em todo dia útil. Quem não
+    // controla ponto (gerente, art. 62 CLT) não tem jornada — turno dispensado.
+    if (!turno && !Number(escala)) return 'Selecione o turno do funcionário (ou marque que ele usa escala).';
+  }
+
+  if (dados.password) {
+    const motivo = motivoSenhaFraca(dados.password, cpfFinal);
+    if (motivo) return motivo;
+  }
+
+  return null;
+}
+
 export default async function funcionarioRoutes(fastify) {
   // Todos os endpoints precisam de autenticação + escopo da empresa
   fastify.addHook('preHandler', authenticate);
@@ -94,7 +149,7 @@ export default async function funcionarioRoutes(fastify) {
   // ─── GET /funcionarios ────────────────────────────────────────────
   fastify.get('/funcionarios', async (request, reply) => {
     const { page, limit, offset } = parsePagination(request.query);
-    const { departamento_id, lotacao_id, ativo, search, filial_id } = request.query;
+    const { departamento_id, lotacao_id, ativo, controla_ponto, search, filial_id } = request.query;
 
     // Gestor e funcionário só veem a própria filial; admin pode filtrar ou ver tudo
     const filialId = request.user.role === 'admin'
@@ -106,6 +161,7 @@ export default async function funcionarioRoutes(fastify) {
       departamentoId: departamento_id,
       lotacaoId: lotacao_id ? Number(lotacao_id) : undefined,
       ativo: ativo !== undefined ? parseInt(ativo) : undefined,
+      controlaPonto: controla_ponto !== undefined ? parseInt(controla_ponto) : undefined,
       search,
       limit,
       offset,
@@ -132,6 +188,9 @@ export default async function funcionarioRoutes(fastify) {
     preHandler: [authorize('admin', 'gestor')],
     schema: createSchema,
   }, async (request, reply) => {
+    const erroValidacao = validarFuncionario(request.body);
+    if (erroValidacao) return reply.code(400).send({ error: erroValidacao, message: erroValidacao });
+
     const { password, ...data } = request.body;
 
     data.empresa_id = request.empresaId;
@@ -197,6 +256,13 @@ export default async function funcionarioRoutes(fastify) {
       return reply.code(404).send({ error: 'Funcionário não encontrado' });
     }
 
+    if (request.body.ativo === 0 && func.id === request.user.id) {
+      return reply.code(422).send({ error: MSG_INATIVAR_PROPRIO_USUARIO, message: MSG_INATIVAR_PROPRIO_USUARIO });
+    }
+
+    const erroValidacao = validarFuncionario(request.body, func);
+    if (erroValidacao) return reply.code(400).send({ error: erroValidacao, message: erroValidacao });
+
     const { password, ...updateData } = request.body;
 
     if (password) {
@@ -205,6 +271,15 @@ export default async function funcionarioRoutes(fastify) {
     }
 
     await FuncionarioRepository.update(request.params.id, updateData);
+
+    // Inativar o funcionário corta o acesso ao sistema junto: antes o usuário
+    // continuava "Ativo" em Usuários do Sistema e as sessões abertas seguiam
+    // renovando. Reativar NÃO devolve o acesso sozinho — o admin libera de
+    // novo em Usuários do Sistema, de propósito.
+    if (func.ativo && updateData.ativo === 0) {
+      await query('UPDATE usuarios SET ativo = 0 WHERE funcionario_id = ?', [func.id]);
+      await AuthService.revokeAllTokens(func.id);
+    }
 
     // Audita todos os campos que realmente mudaram (nunca a senha/hash)
     const dadosAnteriores = {};

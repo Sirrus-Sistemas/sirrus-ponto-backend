@@ -134,7 +134,7 @@ export async function listarFuncionariosComEscala(empresaId, filialId) {
     LEFT JOIN filiais fi ON f.filial_id = fi.id
     LEFT JOIN departamentos d ON f.departamento_id = d.id
     LEFT JOIN turnos t ON f.turno_id = t.id
-    WHERE f.empresa_id = ? AND f.ativo = 1
+    WHERE f.empresa_id = ? AND f.ativo = 1 AND f.controla_ponto = 1
   `;
   const params = [empresaId];
 

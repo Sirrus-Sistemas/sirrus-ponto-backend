@@ -37,3 +37,8 @@ export const PAGINATION = {
 };
 
 export const PONTO_DUPLICATA_JANELA_SEG = 60; // Janela para detectar grupos de duplicatas (1 minuto)
+
+// Inativar/bloquear a própria conta tranca o usuário fora do sistema (já
+// aconteceu com cliente) — barrado em Usuários do Sistema e em Funcionários.
+export const MSG_INATIVAR_PROPRIO_USUARIO =
+  'Não é possível inativar o usuário que está logado. Solicite a outro administrador que realize essa alteração.';

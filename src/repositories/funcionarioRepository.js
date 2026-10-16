@@ -1,4 +1,5 @@
 import { query, transaction } from '../config/database.js';
+import { chaveDocumento, sqlChaveDocumento } from '../utils/cpf.js';
 
 export const FuncionarioRepository = {
   /**
@@ -58,27 +59,24 @@ export const FuncionarioRepository = {
    * campos dependendo do modelo do equipamento.
    */
   async findByCpfOuPis(empresaId, { cpf, pis }) {
-    if (cpf) {
-      const digits = cpf.replace(/\D/g, '');
+    // Compara pela chave normalizada (só dígitos, sem zeros à esquerda) e
+    // cruzando os campos: o relógio pode mandar no "PIS" o CPF (Portaria 671)
+    // e o cadastro pode ter máscara ou 11 vs 12 dígitos. Antes `pis = ?`
+    // exato deixava pendente quem tinha o PIS cadastrado com máscara.
+    // CPF tem prioridade sobre PIS, como antes.
+    for (const doc of [cpf, pis]) {
+      const chave = chaveDocumento(doc);
+      if (!chave) continue;
       const rows = await query(
         `SELECT id FROM funcionarios
           WHERE empresa_id = ?
-            AND REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(cpf, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+            AND (${sqlChaveDocumento('cpf')} = ? OR ${sqlChaveDocumento('pis')} = ?)
+          ORDER BY ativo DESC, id DESC
           LIMIT 1`,
-        [empresaId, digits],
+        [empresaId, chave, chave],
       );
       if (rows[0]) return rows[0].id;
     }
-
-    if (pis) {
-      const digits = pis.replace(/\D/g, '');
-      const rows = await query(
-        'SELECT id FROM funcionarios WHERE empresa_id = ? AND pis = ? LIMIT 1',
-        [empresaId, digits],
-      );
-      if (rows[0]) return rows[0].id;
-    }
-
     return null;
   },
 
@@ -110,9 +108,11 @@ export const FuncionarioRepository = {
       `SELECT f.id, f.empresa_id, f.filial_id, f.departamento_id, f.turno_id, f.lotacao_id, f.gestor_id,
               f.nome, f.cpf, f.email, f.telefone, f.foto_path,
               f.cargo, f.matricula, f.data_admissao, f.data_demissao, f.pis,
+              f.rg, f.data_nascimento,
               f.cep, f.logradouro, f.numero, f.complemento, f.bairro, f.cidade, f.estado,
               f.municipio_id,
               f.role, f.ativo, f.usa_escala, f.usa_banco_horas, f.usa_mobile, f.admin_ponto_mobile, f.pontomobile_id,
+              f.controla_ponto,
               f.central_ativa, f.permitir_geo, f.permitir_foto, f.permitir_ajuste_ponto,
               f.created_at, f.updated_at,
               fi.nome AS filial_nome,
@@ -145,9 +145,9 @@ export const FuncionarioRepository = {
   /**
    * Lista funcionários com filtros e paginação.
    */
-  async findAll(empresaId, { filialId, departamentoId, lotacaoId, ativo, search, limit, offset }) {
+  async findAll(empresaId, { filialId, departamentoId, lotacaoId, ativo, controlaPonto, search, limit, offset }) {
     let sql = `
-      SELECT f.id, f.nome, f.email, f.cpf, f.pis, f.cargo, f.matricula, f.role, f.ativo, f.usa_escala,
+      SELECT f.id, f.nome, f.email, f.cpf, f.pis, f.cargo, f.matricula, f.role, f.ativo, f.usa_escala, f.controla_ponto,
              f.filial_id, f.lotacao_id, f.data_admissao, f.foto_path,
              fi.nome AS filial_nome,
              d.nome AS departamento_nome,
@@ -178,6 +178,12 @@ export const FuncionarioRepository = {
     if (ativo !== undefined) {
       sql += ' AND f.ativo = ?';
       params.push(ativo);
+    }
+    // Telas de ponto (Ficha, Espelho, relatórios, Dashboard) pedem só quem
+    // controla ponto — o gerente dispensado (art. 62 CLT) fica de fora.
+    if (controlaPonto !== undefined) {
+      sql += ' AND f.controla_ponto = ?';
+      params.push(controlaPonto);
     }
     if (search) {
       const term = `%${search}%`;
@@ -213,16 +219,17 @@ export const FuncionarioRepository = {
       `INSERT INTO funcionarios
        (empresa_id, filial_id, departamento_id, turno_id, lotacao_id, gestor_id,
         nome, cpf, email, telefone, cargo, matricula,
-        data_admissao, pis, senha_hash, senha_mobile, role,
+        data_admissao, pis, rg, data_nascimento, senha_hash, senha_mobile, role,
         cep, logradouro, numero, complemento, bairro, cidade, estado, municipio_id,
-        usa_mobile, admin_ponto_mobile, usa_banco_horas)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        usa_mobile, admin_ponto_mobile, usa_banco_horas, controla_ponto)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.empresa_id, data.filial_id || null, data.departamento_id || null,
         data.turno_id || null, data.lotacao_id || null, data.gestor_id || null,
         data.nome, data.cpf || null, data.email, data.telefone || null,
         data.cargo || null, data.matricula || null,
-        data.data_admissao, data.pis || null, data.senha_hash, data.senha_mobile || null,
+        data.data_admissao || null, data.pis || null, data.rg || null, data.data_nascimento || null,
+        data.senha_hash, data.senha_mobile || null,
         data.role || 'funcionario',
         data.cep || null, data.logradouro || null, data.numero || null,
         data.complemento || null, data.bairro || null, data.cidade || null, data.estado || null,
@@ -230,6 +237,7 @@ export const FuncionarioRepository = {
         data.usa_mobile ?? 0,
         data.admin_ponto_mobile ?? 0,
         data.usa_banco_horas ?? 0,
+        data.controla_ponto ?? 1,
       ]
     );
     return result.insertId;
@@ -245,10 +253,10 @@ export const FuncionarioRepository = {
     const allowed = [
       'filial_id', 'departamento_id', 'turno_id', 'lotacao_id', 'gestor_id', 'nome', 'cpf',
       'email', 'telefone', 'foto_path', 'cargo', 'matricula',
-      'data_admissao', 'data_demissao', 'pis', 'role', 'ativo', 'usa_escala', 'usa_banco_horas',
+      'data_admissao', 'data_demissao', 'pis', 'rg', 'data_nascimento', 'role', 'ativo', 'usa_escala', 'usa_banco_horas',
       'central_ativa', 'permitir_geo', 'permitir_foto', 'permitir_ajuste_ponto',
       'cep', 'logradouro', 'numero', 'complemento', 'bairro', 'cidade', 'estado', 'municipio_id',
-      'usa_mobile', 'admin_ponto_mobile', 'senha_hash', 'senha_mobile',
+      'usa_mobile', 'admin_ponto_mobile', 'senha_hash', 'senha_mobile', 'controla_ponto',
     ];
 
     for (const key of allowed) {
