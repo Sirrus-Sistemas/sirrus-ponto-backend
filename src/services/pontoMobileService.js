@@ -1065,6 +1065,28 @@ export async function desbloquearBloqueada(id, usuarioId) {
 
 // ── Status da configuração ───────────────────────────────────────────────────
 
+/**
+ * Assina um arquivo em PKCS#7 (CAdES, conteúdo embutido) com o certificado da
+ * Sirrus — rota /admin/assinatura/assinar-pkcs7 da API do Ponto Mobile, a
+ * mesma usada pelo legado. Devolve o .p7s.
+ */
+export async function assinarPkcs7(conteudo, nomeArquivo) {
+  if (!BASE_URL) throw new Error('PONTOMOBILE_URL não configurada.');
+  const token = await _getToken();
+  const form = new FormData();
+  form.append('file', new Blob([conteudo]), nomeArquivo);
+  const res = await fetch(`${BASE_URL}/api/v1/admin/assinatura/assinar-pkcs7`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    body: form,
+  });
+  if (!res.ok) {
+    const texto = await res.text();
+    throw new Error(`Assinatura falhou (${res.status}): ${texto.slice(0, 200)}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
 export function isMobileConfigured() {
   return !!(BASE_URL && process.env.PONTOMOBILE_CPF && process.env.PONTOMOBILE_SENHA);
 }
