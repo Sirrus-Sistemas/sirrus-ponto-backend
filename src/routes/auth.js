@@ -2,6 +2,8 @@ import { AuthService } from '../services/authService.js';
 import { authenticate } from '../middlewares/auth.js';
 import { EmpresaRepository } from '../repositories/empresaRepository.js';
 import { checkLicenca } from '../services/licencaService.js';
+import { buscarEmpresas, garantirFuncionarioSuporte } from '../services/suporteService.js';
+import { auditar } from '../services/auditService.js';
 import crypto from 'crypto';
 import { onlyCpfDigits } from '../utils/cpf.js';
 
@@ -145,6 +147,20 @@ export default async function authRoutes(fastify) {
 
     const userData = await AuthService.login(cpf, password);
 
+    // Técnico do suporte Sirrus: ainda sem empresa. Devolve um token curto que
+    // só serve para escolher a empresa (ver /auth/suporte/*). A escolha emite
+    // o token normal, já com a empresa.
+    if (userData.suporte) {
+      const suporteToken = fastify.jwt.sign(
+        { suporte: true, cpf: userData.cpf },
+        { expiresIn: '15m' },
+      );
+      return {
+        success: true,
+        data: { suporte: true, suporte_token: suporteToken },
+      };
+    }
+
     // Valida licença no banco remoto de liberações
     // Filial própria → valida pelo CNPJ da filial; sem filial → valida pelo CNPJ da empresa
     let cnpjLicenca;
@@ -202,6 +218,74 @@ export default async function authRoutes(fastify) {
   fastify.post('/auth/logout', { preHandler: [authenticate] }, async (request, reply) => {
     await AuthService.revokeAllTokens(request.user.id);
     return { success: true, message: 'Logout realizado com sucesso' };
+  });
+
+  // ─── Suporte Sirrus: escolher a empresa ───────────────────────────
+  // Protegidas pelo suporte_token (emitido no login por senha diária). Só o
+  // técnico autenticado pode listar e entrar em uma empresa.
+  async function exigirSuporte(request, reply) {
+    try {
+      await request.jwtVerify();
+    } catch {
+      return reply.code(401).send({ message: 'Sessão de suporte inválida ou expirada.' });
+    }
+    if (!request.user?.suporte) {
+      return reply.code(403).send({ message: 'Acesso restrito ao suporte Sirrus.' });
+    }
+  }
+
+  // GET /auth/suporte/empresas?busca=
+  fastify.get('/auth/suporte/empresas', { preHandler: [exigirSuporte] }, async (request) => {
+    const empresas = await buscarEmpresas(request.query?.busca);
+    return { success: true, data: empresas };
+  });
+
+  // POST /auth/suporte/entrar  { empresa_id }
+  fastify.post('/auth/suporte/entrar', {
+    preHandler: [exigirSuporte],
+    schema: { body: { type: 'object', required: ['empresa_id'], properties: { empresa_id: { type: 'integer', minimum: 1 } } } },
+  }, async (request, reply) => {
+    const empresaId = request.body.empresa_id;
+    const empresa = await EmpresaRepository.findById(empresaId);
+    if (!empresa) return reply.code(404).send({ message: 'Empresa não encontrada.' });
+    await checkLicenca(empresa.cnpj, request.log);
+
+    const funcionarioId = await garantirFuncionarioSuporte(empresaId);
+    const { accessToken, refreshToken } = await emitirTokens(request, {
+      id: funcionarioId,
+      empresa_id: empresaId,
+      filial_id: null,
+      role: 'admin',
+    });
+
+    // Registra a entrada do técnico na empresa (quem, qual CPF, qual empresa).
+    auditar({
+      acao: 'SUPORTE_LOGIN',
+      tabela: 'empresas',
+      registro_id: String(empresaId),
+      dados_anteriores: null,
+      dados_novos: { cpf_suporte: request.user.cpf, empresa_id: empresaId, razao_social: empresa.razao_social },
+      usuario_id: funcionarioId,
+      empresa_id: empresaId,
+      ip: request.ip,
+    });
+
+    return {
+      success: true,
+      data: {
+        user: {
+          id: funcionarioId,
+          nome: 'Suporte Sirrus',
+          role: 'admin',
+          suporte: true,
+          empresa: empresa.razao_social,
+          filial_id: null,
+        },
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        expires_in: process.env.JWT_EXPIRES_IN || '15m',
+      },
+    };
   });
 
   // ─── PUT /auth/change-password ────────────────────────────────────

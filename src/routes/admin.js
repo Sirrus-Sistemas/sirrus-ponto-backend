@@ -177,7 +177,7 @@ export default async function adminRoutes(fastify) {
               e.max_filiais, e.max_funcionarios, e.created_at,
               COUNT(f.id) AS total_funcionarios_ativos
        FROM empresas e
-       LEFT JOIN funcionarios f ON f.empresa_id = e.id AND f.ativo = 1
+       LEFT JOIN funcionarios f ON f.empresa_id = e.id AND f.ativo = 1 AND f.suporte_sirrus = 0
        GROUP BY e.id
        ORDER BY e.razao_social`,
     );

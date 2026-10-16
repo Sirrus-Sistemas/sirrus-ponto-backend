@@ -159,7 +159,7 @@ export const FuncionarioRepository = {
       LEFT JOIN departamentos d ON f.departamento_id = d.id
       LEFT JOIN turnos t ON f.turno_id = t.id
       LEFT JOIN lotacoes l ON f.lotacao_id = l.id
-      WHERE f.empresa_id = ?
+      WHERE f.empresa_id = ? AND f.suporte_sirrus = 0
     `;
     const params = [empresaId];
 

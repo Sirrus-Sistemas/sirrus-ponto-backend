@@ -206,7 +206,7 @@ export default async function funcionarioRoutes(fastify) {
     const [limiteRow] = await query(
       `SELECT e.max_funcionarios, COUNT(f.id) AS total_ativos
        FROM empresas e
-       LEFT JOIN funcionarios f ON f.empresa_id = e.id AND f.ativo = 1
+       LEFT JOIN funcionarios f ON f.empresa_id = e.id AND f.ativo = 1 AND f.suporte_sirrus = 0
        WHERE e.id = ?
        GROUP BY e.id`,
       [request.empresaId],

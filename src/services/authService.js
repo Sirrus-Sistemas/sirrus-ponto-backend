@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { query } from '../config/database.js';
 import { UsuarioRepository } from '../repositories/usuarioRepository.js';
 import { onlyCpfDigits } from '../utils/cpf.js';
+import { ehLoginSuporte } from './suporteService.js';
 
 /**
  * Senha que é o CPF ou um pedaço dele (ex.: os 6 primeiros dígitos, padrão do
@@ -54,12 +55,11 @@ export const AuthService = {
     }
 
     const row = await UsuarioRepository.findAuthByCpfDigits(digits);
-    if (!row) {
-      throw Object.assign(new Error('CPF ou senha inválidos'), { statusCode: 401 });
-    }
-
-    const senhaCorreta = await bcrypt.compare(password, row.usuario_senha_hash);
+    const senhaCorreta = row ? await bcrypt.compare(password, row.usuario_senha_hash) : false;
     if (!senhaCorreta) {
+      // Técnico do suporte Sirrus (CPF autorizado + senha diária): não é
+      // usuário de nenhuma empresa — escolhe a empresa depois do login.
+      if (ehLoginSuporte(digits, password)) return { suporte: true, cpf: digits };
       throw Object.assign(new Error('CPF ou senha inválidos'), { statusCode: 401 });
     }
 
@@ -106,11 +106,11 @@ export const AuthService = {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
     const rows = await query(
-      `SELECT rt.*, f.email, f.role, f.empresa_id, f.filial_id, f.nome, f.ativo,
+      `SELECT rt.*, f.email, f.role, f.empresa_id, f.filial_id, f.nome, f.ativo, f.suporte_sirrus,
               u.ativo AS usuario_ativo, u.trocar_senha
        FROM refresh_tokens rt
        JOIN funcionarios f ON rt.funcionario_id = f.id
-       JOIN usuarios u ON u.funcionario_id = f.id
+       LEFT JOIN usuarios u ON u.funcionario_id = f.id
        WHERE rt.token_hash = ? AND rt.revoked = 0 AND rt.expires_at > NOW()
        LIMIT 1`,
       [tokenHash]
@@ -122,7 +122,9 @@ export const AuthService = {
 
     const row = rows[0];
 
-    if (!row.ativo || !row.usuario_ativo) {
+    // Suporte Sirrus não tem linha em usuarios (entra pela senha diária).
+    const suporte = Number(row.suporte_sirrus) === 1;
+    if (!row.ativo || (!suporte && !row.usuario_ativo)) {
       throw Object.assign(new Error('Usuário inativo'), { statusCode: 403 });
     }
 
@@ -137,6 +139,7 @@ export const AuthService = {
       email: row.email,
       role: row.role,
       trocar_senha: Boolean(row.trocar_senha),
+      suporte,
     };
   },
 

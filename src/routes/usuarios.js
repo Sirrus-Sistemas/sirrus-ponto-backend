@@ -23,7 +23,7 @@ export default async function usuariosRoutes(fastify) {
        FROM funcionarios f
        LEFT JOIN usuarios u ON u.funcionario_id = f.id
        LEFT JOIN lotacoes l ON l.id = f.lotacao_id
-       WHERE f.empresa_id = ?
+       WHERE f.empresa_id = ? AND f.suporte_sirrus = 0
        ORDER BY f.nome`,
       [request.empresaId]
     );
