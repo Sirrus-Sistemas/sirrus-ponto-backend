@@ -556,7 +556,7 @@ export const EspelhoPontoService = {
           )
         : Promise.resolve([]),
       funcionario?.lotacao_id
-        ? query('SELECT feriado_tipo, domingo_tipo, domingo_nao_previsto_tipo, dia_nao_previsto_tipo, hora_inicio_adicional_noturno, dividir_extras_50_100, calcula_pares_sequenciais_noturno, nao_calcular_extras_debito, nao_calcular_adicional_noturno FROM lotacoes WHERE id = ?', [funcionario.lotacao_id])
+        ? query('SELECT feriado_tipo, domingo_tipo, domingo_nao_previsto_tipo, dia_nao_previsto_tipo, hora_inicio_adicional_noturno, dividir_extras_50_100, calcula_pares_sequenciais_noturno, nao_calcular_extras_debito, nao_calcular_adicional_noturno, dobrar_100pct_trabalhado FROM lotacoes WHERE id = ?', [funcionario.lotacao_id])
         : Promise.resolve([]),
     ]);
     for (const r of thRows) turnoHorariosMap.set(Number(r.dia_semana), r);
@@ -1125,6 +1125,15 @@ export const EspelhoPontoService = {
       };
     });
 
+    // Dobra as horas de 100% quando a lotação pede: o cliente paga em dobro o
+    // trabalho que cai no balde de 100% (feriado/domingo/dia não previsto). Só
+    // o total do resumo e o banco de horas dobram — a coluna 100% de cada dia e
+    // os arquivos MTE (que leem o valor cru por dia) ficam com a hora real.
+    // O débito de 100% não dobra (dívida não vira em dobro).
+    const totalExtras100pctFinal = lotacao?.dobrar_100pct_trabalhado
+      ? totalExtras100pct * 2
+      : totalExtras100pct;
+
     return {
       ano: year,
       mes: month,
@@ -1175,7 +1184,7 @@ export const EspelhoPontoService = {
         dias_falta: diasFalta,
         dias_folga: diasFolga,
         dias_ocorrencia: diasOcorrencia,
-        total_extras_100pct_minutos: totalExtras100pct,
+        total_extras_100pct_minutos: totalExtras100pctFinal,
         total_extras_50pct_minutos: totalExtras50pct,
         total_debito_minutos: totalDebitoMinutos,
         total_debito_100pct_minutos: totalDebito100pctMinutos,
@@ -1197,7 +1206,7 @@ export const EspelhoPontoService = {
           minutosPrevistoDia != null
             ? bancoHorasSaldoAnterior
               + (totalExtras50pct - totalDebitoMinutos)
-              + (totalExtras100pct - totalDebito100pctMinutos)
+              + (totalExtras100pctFinal - totalDebito100pctMinutos)
             : bancoHorasSaldoAnterior,
       },
     };
