@@ -255,6 +255,29 @@ export default async function relogiosRoutes(fastify) {
     return successResponse(null, 'Marcação pendente excluída.');
   });
 
+  // ── POST /api/relogios/marcacoes/excluir-lote  (tela de reconciliação)
+  // Mesma regra do DELETE acima, pra várias de uma vez — a tela tem páginas
+  // demais pra excluir uma por uma quando é um lote de batidas de teste.
+  fastify.post('/relogios/marcacoes/excluir-lote', {
+    preHandler: [authorize('admin')],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['ids'],
+        properties: {
+          ids: { type: 'array', minItems: 1, items: { type: 'integer', minimum: 1 } },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    if (!request.user.suporte_sirrus) {
+      return reply.code(403).send({ message: 'Ação restrita ao suporte Sirrus.' });
+    }
+    const ids = [...new Set(request.body.ids.map(Number))];
+    const excluidas = await RelogioMarcacaoRepository.excluirVarias(ids, request.empresaId);
+    return successResponse({ excluidas }, `${excluidas} marcação(ões) pendente(s) excluída(s).`);
+  });
+
   // ── POST /api/relogios/marcacoes/validar-todos  (tela de reconciliação)
   // Revalida todas as pendentes da empresa contra o cadastro atual —
   // resolve de uma vez o caso de CPF/PIS corrigido depois da importação.

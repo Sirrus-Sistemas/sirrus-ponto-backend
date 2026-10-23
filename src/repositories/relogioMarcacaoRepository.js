@@ -307,6 +307,19 @@ export const RelogioMarcacaoRepository = {
     return result.affectedRows > 0;
   },
 
+  /** Mesma regra de excluir(), para várias de uma vez (tela tem seleção em massa). */
+  async excluirVarias(ids, empresaId) {
+    if (ids.length === 0) return 0;
+    const placeholders = ids.map(() => '?').join(',');
+    const result = await query(
+      `DELETE rmi FROM relogio_marcacoes_importadas rmi
+         JOIN relogios_ponto r ON r.id = rmi.relogio_id
+        WHERE rmi.id IN (${placeholders}) AND r.empresa_id = ? AND rmi.status = 'pendente'`,
+      [...ids, empresaId],
+    );
+    return result.affectedRows;
+  },
+
   /** Vincula manualmente uma marcação pendente a um funcionário. */
   async vincular(id, funcionarioId) {
     const [pendente] = await query(
