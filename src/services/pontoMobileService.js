@@ -425,7 +425,7 @@ export async function redefinirSenhaMobile(funcionarioId, senha) {
  *   Chamado a cada lote processado — usado por iniciarSyncAllFuncionarios para acompanhar o job em background.
  */
 export async function syncAllFuncionarios(empresaId, { filialId = null, lotacaoId = null } = {}, onProgress = null) {
-  let sql = 'SELECT id, filial_id, lotacao_id FROM funcionarios WHERE empresa_id = ? AND ativo = 1';
+  let sql = 'SELECT id, filial_id, lotacao_id FROM funcionarios WHERE empresa_id = ? AND ativo = 1 AND controla_ponto = 1';
   const params = [empresaId];
   if (filialId) {
     sql += ' AND filial_id = ?';
@@ -927,6 +927,39 @@ export async function listarPendentesAprovacao(filialId, dataInicio, dataFim, lo
         funcionario_nome: funcEntry.nome,
         turno: i.turno,
         tipo: i.tipo,
+        observacao: i.observacao,
+        latitude: i.loc_latitude,
+        longitude: i.loc_longitude,
+        foto_url: i.foto ? `${BASE_URL}/storage/${i.foto}` : null,
+        data_hora_utc: marcacaoAtToUtc(i.marcacao_at, fusoEfetivo),
+      };
+    })
+    .sort((a, b) => a.data_hora_utc.localeCompare(b.data_hora_utc));
+}
+
+/**
+ * Igual a listarPendentesAprovacao, mas sem filtrar por status — inclui também
+ * as já aprovadas ('C') e negadas ('N'). Hoje, assim que uma batida é decidida
+ * ela some da tela de pendentes; esta função existe pra dar um jeito de olhar
+ * de novo a foto/localização de uma batida já processada (ex.: conferir se a
+ * foto bate com o funcionário certo quando se desconfia de uma batida caindo
+ * no cadastro errado).
+ */
+export async function listarHistoricoAprovacao(filialId, dataInicio, dataFim, lotacaoId = null, funcionarioId = null) {
+  const { items, funcMap } = await _buscarEMapear(filialId, dataInicio, dataFim, lotacaoId, funcionarioId);
+
+  return items
+    .filter((i) => funcMap.has(Number(i.funcionario_id)))
+    .map((i) => {
+      const funcEntry = funcMap.get(Number(i.funcionario_id));
+      const fusoEfetivo = i.fuso != null ? i.fuso : fusoHorarioToNumber(funcEntry.fusoHorario);
+      return {
+        mobile_id: Number(i.id),
+        funcionario_id: funcEntry.id,
+        funcionario_nome: funcEntry.nome,
+        turno: i.turno,
+        tipo: i.tipo,
+        status: i.status,
         observacao: i.observacao,
         latitude: i.loc_latitude,
         longitude: i.loc_longitude,

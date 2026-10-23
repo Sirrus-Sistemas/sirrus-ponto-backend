@@ -112,7 +112,7 @@ export const FuncionarioRepository = {
               f.cep, f.logradouro, f.numero, f.complemento, f.bairro, f.cidade, f.estado,
               f.municipio_id,
               f.role, f.ativo, f.usa_escala, f.usa_banco_horas, f.usa_mobile, f.admin_ponto_mobile, f.pontomobile_id,
-              f.controla_ponto,
+              f.controla_ponto, f.suporte_sirrus,
               f.central_ativa, f.permitir_geo, f.permitir_foto, f.permitir_ajuste_ponto,
               f.created_at, f.updated_at,
               fi.nome AS filial_nome,

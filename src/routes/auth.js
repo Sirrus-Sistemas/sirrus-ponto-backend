@@ -91,6 +91,9 @@ export default async function authRoutes(fastify) {
         role: userData.role,
         // Enquanto true, authenticate só libera trocar a senha (ver middleware).
         ...(userData.trocar_senha ? { trocar_senha: true } : {}),
+        // Login do técnico de suporte Sirrus (SUPORTE_CPFS) — libera ações
+        // restritas só a ele nas telas (ex.: excluir marcação pendente de teste).
+        ...(userData.suporte ? { suporte_sirrus: true } : {}),
       },
       { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
     );
@@ -256,6 +259,7 @@ export default async function authRoutes(fastify) {
       empresa_id: empresaId,
       filial_id: null,
       role: 'admin',
+      suporte: true,
     });
 
     // Registra a entrada do técnico na empresa (quem, qual CPF, qual empresa).

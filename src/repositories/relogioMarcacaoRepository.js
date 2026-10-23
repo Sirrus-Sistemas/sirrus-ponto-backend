@@ -290,6 +290,23 @@ export const RelogioMarcacaoRepository = {
     return { rows, total: Number(total) };
   },
 
+  /**
+   * Exclui uma marcação pendente sem vincular — para batidas de teste (ex.:
+   * funcionário fantasma cadastrado só pra testar o relógio, sem registro
+   * correspondente em funcionarios e que nunca vai bater com nenhum CPF/PIS
+   * real). Só apaga pendente (nunca uma já vinculada) e só dentro da própria
+   * empresa.
+   */
+  async excluir(id, empresaId) {
+    const result = await query(
+      `DELETE rmi FROM relogio_marcacoes_importadas rmi
+         JOIN relogios_ponto r ON r.id = rmi.relogio_id
+        WHERE rmi.id = ? AND r.empresa_id = ? AND rmi.status = 'pendente'`,
+      [id, empresaId],
+    );
+    return result.affectedRows > 0;
+  },
+
   /** Vincula manualmente uma marcação pendente a um funcionário. */
   async vincular(id, funcionarioId) {
     const [pendente] = await query(

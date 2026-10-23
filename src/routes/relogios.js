@@ -240,6 +240,21 @@ export default async function relogiosRoutes(fastify) {
     return successResponse(null, 'Marcação vinculada com sucesso.');
   });
 
+  // ── DELETE /api/relogios/marcacoes/:id  (tela de reconciliação)
+  // Descarta uma marcação pendente sem vincular — ex.: batida de um
+  // funcionário fantasma criado só pra testar o relógio, que nunca vai ter
+  // cadastro correspondente. Restrito ao login do técnico de suporte Sirrus
+  // (SUPORTE_CPFS no .env) — um cliente não deve apagar batida de ponto sem
+  // vincular, só o suporte decide isso depois de confirmar que é lixo de teste.
+  fastify.delete('/relogios/marcacoes/:id', { preHandler: [authorize('admin')] }, async (request, reply) => {
+    if (!request.user.suporte_sirrus) {
+      return reply.code(403).send({ message: 'Ação restrita ao suporte Sirrus.' });
+    }
+    const excluida = await RelogioMarcacaoRepository.excluir(Number(request.params.id), request.empresaId);
+    if (!excluida) return reply.code(404).send({ message: 'Marcação pendente não encontrada.' });
+    return successResponse(null, 'Marcação pendente excluída.');
+  });
+
   // ── POST /api/relogios/marcacoes/validar-todos  (tela de reconciliação)
   // Revalida todas as pendentes da empresa contra o cadastro atual —
   // resolve de uma vez o caso de CPF/PIS corrigido depois da importação.

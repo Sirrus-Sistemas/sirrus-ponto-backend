@@ -11,6 +11,7 @@ import {
   desbloquearBloqueada,
   isMobileConfigured,
   listarPendentesAprovacao,
+  listarHistoricoAprovacao,
   decidirMarcacoesMobile,
   listarConflitosPontomobileId,
   redefinirSenhaMobile,
@@ -268,6 +269,35 @@ export default async function mobileRoutes(fastify) {
         return successResponse(pendentes);
       } catch (e) {
         return reply.code(400).send({ error: 'Erro ao buscar pendentes', message: e.message });
+      }
+    },
+  );
+
+  fastify.get(
+    '/mobile/aprovacao/historico',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          required: ['filial_id', 'data_inicio', 'data_fim'],
+          properties: {
+            filial_id: { type: 'integer', minimum: 1 },
+            data_inicio: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+            data_fim: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+            lotacao_id: { type: 'integer', minimum: 1 },
+            funcionario_id: { type: 'integer', minimum: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      const { filial_id, data_inicio, data_fim, lotacao_id, funcionario_id } = request.query;
+      try {
+        const historico = await listarHistoricoAprovacao(filial_id, data_inicio, data_fim, lotacao_id ?? null, funcionario_id ?? null);
+        return successResponse(historico);
+      } catch (e) {
+        return reply.code(400).send({ error: 'Erro ao buscar histórico', message: e.message });
       }
     },
   );

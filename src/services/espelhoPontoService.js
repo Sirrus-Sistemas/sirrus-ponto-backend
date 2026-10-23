@@ -1057,19 +1057,17 @@ export const EspelhoPontoService = {
         horarios_previstos = [funcionario.turno_entrada, funcionario.turno_saida_intervalo, funcionario.turno_retorno_intervalo, funcionario.turno_saida].filter(Boolean).map((h) => String(h).slice(0, 5));
       }
 
-      // Filtra horarios_previstos: casa por ORDEM/CONTAGEM (posição), não por
-      // igualdade exata de horário — mesmo bug e mesmo fix de
-      // justificativaPeriodoService.js. Os campos TIME do MySQL vêm com segundos
-      // ("08:00:00"), então a comparação por string nunca batia nem por coincidência;
-      // e mesmo comparando só HH:MM, o funcionário quase nunca bate no minuto exato
-      // previsto — a batida real já lançada nunca "cancelava" o horário previsto
-      // correspondente, reenviando a jornada inteira como pendente pro botão de
-      // Justificativa Automática. Já existem N batidas reais nesse dia → considera
-      // pendentes só os horários previstos a partir do N-ésimo (pula os N primeiros,
-      // na ordem E1/S1/E2/S2...).
-      if (horarios_previstos.length > 0 && rawDedup.length > 0) {
-        horarios_previstos = horarios_previstos.slice(rawDedup.length);
-      }
+      // horarios_previstos vai SEMPRE com a jornada completa do dia (não só os
+      // que faltam) — quem casa cada batida real com o previsto mais próximo e
+      // decide o que falta é o frontend (previstosSemBatida em
+      // batidaDataHora.ts), com um algoritmo por distância que lida bem com
+      // faltar qualquer posição (não só a última). Cortar aqui pela CONTAGEM de
+      // batidas já feitas (como esta função fazia antes) ficou incompatível com
+      // esse algoritmo: um dia com 3 das 4 batidas feitas mandava só 1 previsto
+      // pro frontend, que por sua vez comparava as 3 batidas reais contra esse
+      // único previsto restante e concluía (errado) que não sobrava nada pra
+      // lançar — "Todos os horários previstos já estão preenchidos" mesmo
+      // faltando bater o ponto.
 
       return {
         data,
