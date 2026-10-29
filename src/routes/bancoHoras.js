@@ -3,7 +3,7 @@ import { query } from '../config/database.js';
 import { BancoHorasRepository } from '../repositories/bancoHorasRepository.js';
 import { parsePagination, paginatedResponse, successResponse } from '../utils/helpers.js';
 import { auditar } from '../services/auditService.js';
-import { fecharMesBancoHoras } from '../services/bancoHorasService.js';
+import { fecharMesBancoHoras, fecharMesTodosFuncionarios } from '../services/bancoHorasService.js';
 import { gerarModeloBancoHoras, importarBancoHoras } from '../services/importBancoHorasService.js';
 
 const lancamentoSchema = {
@@ -30,6 +30,19 @@ const fecharMesSchema = {
       funcionario_id: { type: 'integer' },
       ano: { type: 'integer', minimum: 2000, maximum: 2100 },
       mes: { type: 'integer', minimum: 1, maximum: 12 },
+    },
+  },
+};
+
+const fecharMesTodosSchema = {
+  body: {
+    type: 'object',
+    required: ['ano', 'mes'],
+    properties: {
+      ano: { type: 'integer', minimum: 2000, maximum: 2100 },
+      mes: { type: 'integer', minimum: 1, maximum: 12 },
+      filial_id: { type: 'integer' },
+      lotacao_id: { type: 'integer' },
     },
   },
 };
@@ -235,5 +248,43 @@ export default async function bancoHorasRoutes(fastify) {
       ? `Mês ${resultado.mes_referencia} fechado: ${resultado.lancamentos.length} lançamento(s).`
       : `Mês ${resultado.mes_referencia} fechado sem saldo a lançar.`;
     return successResponse(resultado, msg);
+  });
+
+  // ─── POST /banco-horas/fechar-mes-todos — fecha o mês de todos os
+  // funcionários que usam banco de horas, de uma vez só ────────────────────
+  fastify.post('/banco-horas/fechar-mes-todos', {
+    preHandler: [authorize('admin', 'gestor')],
+    schema: fecharMesTodosSchema,
+  }, async (request) => {
+    const { ano, mes, filial_id, lotacao_id } = request.body;
+
+    const resultado = await fecharMesTodosFuncionarios(request.empresaId, ano, mes, request.user.id, {
+      filialId: filial_id ?? null,
+      lotacaoId: lotacao_id ?? null,
+    });
+
+    auditar({
+      acao: 'INSERT',
+      tabela: 'banco_horas',
+      registro_id: `fechamento-lote-${resultado.mes_referencia}`,
+      dados_anteriores: null,
+      dados_novos: {
+        mes_referencia: resultado.mes_referencia,
+        total: resultado.total,
+        fechados: resultado.fechados,
+        sem_saldo: resultado.sem_saldo,
+        ja_fechado: resultado.ja_fechado,
+        nao_calculados: resultado.nao_calculados,
+      },
+      usuario_id: request.user.id,
+      empresa_id: request.empresaId,
+      ip: request.ip,
+    });
+
+    return successResponse(
+      resultado,
+      `Mês ${resultado.mes_referencia}: ${resultado.fechados} fechado(s), ${resultado.sem_saldo} sem saldo, ` +
+      `${resultado.ja_fechado} já fechado(s) antes, ${resultado.nao_calculados.length} não calculado(s).`,
+    );
   });
 }
