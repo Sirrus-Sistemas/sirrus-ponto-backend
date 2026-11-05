@@ -64,16 +64,46 @@ export function gerarDias({
  * do dia 1 ao 15 e depois passou pro horário comercial do dia 16 em diante).
  * Não persiste nada — mesmo uso de gerarDias (preview e salvar).
  */
+/**
+ * Normaliza um horário (entrada/saida_intervalo/retorno_intervalo/saida) pro
+ * par entrada1/saida1 + entrada2/saida2 da escala. Turno "corrido" (sem
+ * intervalo, ex.: 17h-23h direto) grava o intervalo como 00:00:00 — colunas
+ * de `turnos` são TIME NOT NULL, não aceitam NULL — ou, em `turno_horarios`,
+ * como NULL mesmo; nos dois casos vira UM único par (entrada→saída), em vez
+ * de forçar saida1 vazio e saida2 recebendo a saída de verdade (jornada de
+ * 6h corridas virava "entrada1 sem saída1" + "saída2 sem entrada2").
+ */
+function normalizarHorario(h) {
+  const semIntervalo = !h.saida_intervalo || !h.retorno_intervalo
+    || h.saida_intervalo === '00:00:00' || h.saida_intervalo === h.retorno_intervalo;
+  return semIntervalo
+    ? { entrada1: h.entrada, saida1: h.saida, entrada2: null, saida2: null }
+    : { entrada1: h.entrada, saida1: h.saida_intervalo, entrada2: h.retorno_intervalo, saida2: h.saida };
+}
+
 export async function gerarDiasDeTurno({ dataInicio, dataFim, turnoId }) {
   const horarios = await query(
     `SELECT dia_semana, trabalha, entrada, saida_intervalo, retorno_intervalo, saida
        FROM turno_horarios WHERE turno_id = ?`,
     [turnoId],
   );
-  if (horarios.length === 0) {
-    throw new Error('Turno sem horários configurados por dia da semana.');
+
+  // Nem todo turno tem horário configurado por dia da semana (só quem já
+  // passou pela grade "Horários por dia" em Turnos tem `turno_horarios`) —
+  // pra esses, usa o horário único do próprio turno em todos os dias do
+  // período, já que não existe outra fonte de "dia de folga" pra ele.
+  let porDiaSemana;
+  if (horarios.length > 0) {
+    porDiaSemana = new Map(horarios.map((h) => [h.dia_semana, { trabalha: !!h.trabalha, ...normalizarHorario(h) }]));
+  } else {
+    const [turno] = await query(
+      `SELECT entrada, saida_intervalo, retorno_intervalo, saida FROM turnos WHERE id = ?`,
+      [turnoId],
+    );
+    if (!turno) throw new Error('Turno não encontrado.');
+    const horarioUnico = { trabalha: true, ...normalizarHorario(turno) };
+    porDiaSemana = new Map([0, 1, 2, 3, 4, 5, 6].map((d) => [d, horarioUnico]));
   }
-  const porDiaSemana = new Map(horarios.map((h) => [h.dia_semana, h]));
 
   const msPerDay = 86400000;
   const fim = toDate(dataFim).getTime();
@@ -87,10 +117,10 @@ export async function gerarDiasDeTurno({ dataInicio, dataFim, turnoId }) {
     dias.push({
       data: toIsoDate(data),
       tipo: ehTrabalho ? 'trabalho' : 'folga',
-      entrada1: ehTrabalho ? h.entrada : null,
-      saida1:   ehTrabalho ? h.saida_intervalo : null,
-      entrada2: ehTrabalho ? h.retorno_intervalo : null,
-      saida2:   ehTrabalho ? h.saida : null,
+      entrada1: ehTrabalho ? h.entrada1 : null,
+      saida1:   ehTrabalho ? h.saida1   : null,
+      entrada2: ehTrabalho ? h.entrada2 : null,
+      saida2:   ehTrabalho ? h.saida2   : null,
       entrada3: null, saida3: null, entrada4: null, saida4: null,
       fim_noturno: null,
     });
