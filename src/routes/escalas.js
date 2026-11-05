@@ -1,6 +1,7 @@
 import { authenticate, authorize, empresaScope } from '../middlewares/auth.js';
 import {
   gerarDias,
+  gerarDiasDeTurno,
   salvarEscala,
   buscarPorPeriodo,
   listarFuncionariosComEscala,
@@ -28,6 +29,19 @@ const gerarSchema = {
       entrada4: { type: 'string' },
       saida4:   { type: 'string' },
       fim_noturno: { type: 'string' },
+    },
+  },
+};
+
+const gerarPorTurnoSchema = {
+  body: {
+    type: 'object',
+    required: ['funcionario_id', 'data_inicio', 'data_fim', 'turno_id'],
+    properties: {
+      funcionario_id: { type: 'integer' },
+      data_inicio:    { type: 'string', format: 'date' },
+      data_fim:       { type: 'string', format: 'date' },
+      turno_id:       { type: 'integer' },
     },
   },
 };
@@ -121,6 +135,84 @@ export default async function escalasRoutes(fastify) {
     });
 
     return { success: true, data: dias };
+  });
+
+  // ─── POST /escalas/por-turno/preview ───────────────────────────────
+  // Gera os dias do período a partir do padrão semanal de um turno já
+  // cadastrado, em vez do ciclo fixo + horários digitados à mão.
+  fastify.post('/escalas/por-turno/preview', {
+    preHandler: [authorize('admin', 'gestor')],
+    schema: gerarPorTurnoSchema,
+  }, async (request, reply) => {
+    const { funcionario_id, data_inicio, data_fim, turno_id } = request.body;
+
+    const [func] = await query(
+      'SELECT id FROM funcionarios WHERE id = ? AND empresa_id = ?',
+      [funcionario_id, request.empresaId]
+    );
+    if (!func) return reply.code(404).send({ error: 'Funcionário não encontrado' });
+
+    const [turno] = await query(
+      'SELECT id FROM turnos WHERE id = ? AND empresa_id = ?',
+      [turno_id, request.empresaId]
+    );
+    if (!turno) return reply.code(404).send({ error: 'Turno não encontrado' });
+
+    let dias;
+    try {
+      dias = await gerarDiasDeTurno({ dataInicio: data_inicio, dataFim: data_fim, turnoId: turno_id });
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+
+    return { success: true, data: dias };
+  });
+
+  // ─── POST /escalas/por-turno ────────────────────────────────────────
+  fastify.post('/escalas/por-turno', {
+    preHandler: [authorize('admin', 'gestor')],
+    schema: gerarPorTurnoSchema,
+  }, async (request, reply) => {
+    const { funcionario_id, data_inicio, data_fim, turno_id } = request.body;
+
+    const [func] = await query(
+      'SELECT id FROM funcionarios WHERE id = ? AND empresa_id = ?',
+      [funcionario_id, request.empresaId]
+    );
+    if (!func) return reply.code(404).send({ error: 'Funcionário não encontrado' });
+
+    const [turno] = await query(
+      'SELECT id, nome FROM turnos WHERE id = ? AND empresa_id = ?',
+      [turno_id, request.empresaId]
+    );
+    if (!turno) return reply.code(404).send({ error: 'Turno não encontrado' });
+
+    let dias;
+    try {
+      dias = await gerarDiasDeTurno({ dataInicio: data_inicio, dataFim: data_fim, turnoId: turno_id });
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+
+    const escalaAnterior = await query(
+      'SELECT * FROM escalas WHERE funcionario_id = ? AND data BETWEEN ? AND ?',
+      [funcionario_id, data_inicio, data_fim],
+    );
+
+    const total = await salvarEscala(funcionario_id, request.user.id, dias, 'turno', null);
+
+    auditar({
+      acao: 'INSERT',
+      tabela: 'escalas',
+      registro_id: `${funcionario_id}-${data_inicio}-${data_fim}`,
+      dados_anteriores: escalaAnterior.length > 0 ? escalaAnterior : null,
+      dados_novos: { turno_id, turno_nome: turno.nome, dias },
+      usuario_id: request.user.id,
+      empresa_id: request.empresaId,
+      ip: request.ip,
+    });
+
+    return reply.code(201).send({ success: true, total, message: `${total} dias gravados a partir do turno "${turno.nome}"` });
   });
 
   // ─── POST /escalas ────────────────────────────────────────────────

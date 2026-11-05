@@ -212,6 +212,47 @@ export default async function relogiosRoutes(fastify) {
     return reply.code(201).send(successResponse(resultados, 'Marcações processadas.'));
   });
 
+  // ── GET /api/relogios/marcacoes/brutas?numero_serie=X&apos_nsr=N&limit=1000
+  //    (ou relogio_id=X no lugar de numero_serie)
+  //
+  // Leitura para sistema externo (Sirrus Ponto Coletor → Velox) que usa esta
+  // conta como ponte: o Sync de cada loja coleta o relógio e grava aqui, e o
+  // Coletor busca as batidas a partir do último NSR que ele já gravou.
+  // Paginação por NSR: repetir com apos_nsr = ultimo_nsr enquanto tem_mais.
+  fastify.get('/relogios/marcacoes/brutas', {
+    preHandler: [authorize('admin')],
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          numero_serie: { type: 'string', minLength: 1 },
+          relogio_id:   { type: 'integer', minimum: 1 },
+          apos_nsr:     { type: 'integer', minimum: 0, default: 0 },
+          limit:        { type: 'integer', minimum: 1, maximum: 5000, default: 1000 },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { numero_serie, relogio_id, apos_nsr, limit } = request.query;
+    if (!numero_serie && !relogio_id) {
+      return reply.code(400).send({ message: 'Informe numero_serie ou relogio_id.' });
+    }
+
+    const relogio = numero_serie
+      ? await RelogioRepository.findByNumeroSerie(numero_serie, request.empresaId)
+      : await RelogioRepository.findById(relogio_id, request.empresaId);
+    if (!relogio) return reply.code(404).send({ message: 'Relógio não encontrado.' });
+
+    const marcacoes = await RelogioMarcacaoRepository.listarBrutas(relogio.id, { aposNsr: apos_nsr, limit });
+    return successResponse({
+      relogio_id: relogio.id,
+      numero_serie: relogio.numero_serie,
+      marcacoes,
+      ultimo_nsr: marcacoes.length ? marcacoes[marcacoes.length - 1].nsr : apos_nsr,
+      tem_mais: marcacoes.length === limit,
+    });
+  });
+
   // ── GET /api/relogios/marcacoes/pendentes?relogio_id=X&search=  (tela de reconciliação)
   fastify.get('/relogios/marcacoes/pendentes', { preHandler: [authorize('admin')] }, async (request) => {
     const relogioId = request.query.relogio_id ? Number(request.query.relogio_id) : undefined;

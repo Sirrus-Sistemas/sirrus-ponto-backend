@@ -185,6 +185,26 @@ export const RelogioMarcacaoRepository = {
   },
 
   /**
+   * Leitura das marcações brutas de um relógio, em ordem de NSR, a partir de
+   * um NSR (exclusivo) — para um sistema externo (Sirrus Ponto Coletor/Velox)
+   * consumir as batidas coletadas pelo Sync. Devolve tudo, vinculado ou não:
+   * a conta usada como ponte não tem funcionários cadastrados.
+   * data_hora sai como texto "AAAA-MM-DD HH:MM:SS" (hora local pura, como foi
+   * gravada — ver migration 035), sem passar por Date/fuso.
+   */
+  async listarBrutas(relogioId, { aposNsr = 0, limit = 1000 } = {}) {
+    const limiteSeguro = Math.min(Math.max(Number.parseInt(limit, 10) || 1000, 1), 5000);
+    return query(
+      `SELECT nsr, cpf, pis, DATE_FORMAT(data_hora, '%Y-%m-%d %H:%i:%s') AS data_hora
+         FROM relogio_marcacoes_importadas
+        WHERE relogio_id = ? AND nsr > ?
+        ORDER BY nsr
+        LIMIT ${limiteSeguro}`,
+      [relogioId, Number(aposNsr) || 0],
+    );
+  },
+
+  /**
    * Vincula automaticamente marcações pendentes desta empresa a um
    * funcionário recém-cadastrado, por CPF ou PIS. Chamado ao criar um
    * funcionário — resolve o caso comum sozinho; o que sobrar (CPF

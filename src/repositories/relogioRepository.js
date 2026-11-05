@@ -30,6 +30,16 @@ export const RelogioRepository = {
     return rows[0] ?? null;
   },
 
+  async findByNumeroSerie(numeroSerie, empresaId) {
+    const rows = await query(
+      `SELECT ${COLUNAS_PUBLICAS}
+       FROM relogios_ponto r
+       WHERE r.numero_serie = ? AND r.empresa_id = ?`,
+      [numeroSerie, empresaId],
+    );
+    return rows[0] ?? null;
+  },
+
   async create(empresaId, data) {
     const result = await query(
       `INSERT INTO relogios_ponto

@@ -1,4 +1,4 @@
-import { query } from '../config/database.js';
+import { query, transaction } from '../config/database.js';
 
 export const RelogioSyncRepository = {
   async enqueue(relogioId, funcionarioId, operacao) {
@@ -117,18 +117,53 @@ export const RelogioSyncRepository = {
 
   // ── Heartbeat / saúde ──────────────────────────────────────────────
 
+  /**
+   * Registra o heartbeat de um sistema de coleta. Uma empresa pode ter vários
+   * (um Sync por loja, cada um marcado só com os relógios da sua rede), então
+   * a lista de relógios é MESCLADA por id em vez de substituída — senão o
+   * Sync da loja A apagaria o status dos relógios da loja B a cada ciclo.
+   * Cada item recebe o próprio `recebido_em`, para a tela saber quando um
+   * relógio específico parou de ser reportado (Sync daquela loja caiu).
+   * Itens de relógios removidos/inativados são descartados no merge.
+   */
   async upsertHeartbeat(empresaId, { versao, status, ultimo_sync, relogios }) {
-    await query(
-      `INSERT INTO relogio_sistema_saude (empresa_id, versao, status, ultimo_sync, relogios)
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         versao      = VALUES(versao),
-         status      = VALUES(status),
-         ultimo_sync = VALUES(ultimo_sync),
-         relogios    = VALUES(relogios),
-         recebido_em = NOW()`,
-      [empresaId, versao ?? null, status ?? null, ultimo_sync ?? null, JSON.stringify(relogios ?? [])],
-    );
+    const agora = new Date().toISOString();
+    const recebidos = Array.isArray(relogios) ? relogios : [];
+
+    await transaction(async (conn) => {
+      await conn.execute(
+        'INSERT IGNORE INTO relogio_sistema_saude (empresa_id, relogios) VALUES (?, ?)',
+        [empresaId, '[]'],
+      );
+      const [[atual]] = await conn.execute(
+        'SELECT relogios FROM relogio_sistema_saude WHERE empresa_id = ? FOR UPDATE',
+        [empresaId],
+      );
+      const [ativos] = await conn.execute(
+        'SELECT id FROM relogios_ponto WHERE empresa_id = ? AND ativo = 1',
+        [empresaId],
+      );
+      const idsAtivos = new Set(ativos.map((r) => r.id));
+
+      let anteriores = [];
+      try { anteriores = JSON.parse(atual?.relogios || '[]'); } catch { anteriores = []; }
+      if (!Array.isArray(anteriores)) anteriores = [];
+
+      const porId = new Map();
+      for (const r of anteriores) {
+        if (r && idsAtivos.has(Number(r.id))) porId.set(Number(r.id), r);
+      }
+      for (const r of recebidos) {
+        if (r && idsAtivos.has(Number(r.id))) porId.set(Number(r.id), { ...r, id: Number(r.id), recebido_em: agora });
+      }
+
+      await conn.execute(
+        `UPDATE relogio_sistema_saude
+            SET versao = ?, status = ?, ultimo_sync = ?, relogios = ?, recebido_em = NOW()
+          WHERE empresa_id = ?`,
+        [versao ?? null, status ?? null, ultimo_sync ?? null, JSON.stringify([...porId.values()]), empresaId],
+      );
+    });
   },
 
   async getSaude(empresaId) {

@@ -57,6 +57,49 @@ export function gerarDias({
 }
 
 /**
+ * Retorna array de objetos { data, tipo, ...horários } para o período, a
+ * partir do padrão semanal de um turno JÁ CADASTRADO (turno_horarios por
+ * dia_semana) — alternativa ao ciclo fixo acima, pra quando o funcionário
+ * usa uma tabela de horário pronta num trecho do mês (ex.: trabalhou 17h-23h
+ * do dia 1 ao 15 e depois passou pro horário comercial do dia 16 em diante).
+ * Não persiste nada — mesmo uso de gerarDias (preview e salvar).
+ */
+export async function gerarDiasDeTurno({ dataInicio, dataFim, turnoId }) {
+  const horarios = await query(
+    `SELECT dia_semana, trabalha, entrada, saida_intervalo, retorno_intervalo, saida
+       FROM turno_horarios WHERE turno_id = ?`,
+    [turnoId],
+  );
+  if (horarios.length === 0) {
+    throw new Error('Turno sem horários configurados por dia da semana.');
+  }
+  const porDiaSemana = new Map(horarios.map((h) => [h.dia_semana, h]));
+
+  const msPerDay = 86400000;
+  const fim = toDate(dataFim).getTime();
+  const dias = [];
+
+  for (let t = toDate(dataInicio).getTime(); t <= fim; t += msPerDay) {
+    const data = new Date(t);
+    const h = porDiaSemana.get(data.getDay());
+    const ehTrabalho = !!h?.trabalha;
+
+    dias.push({
+      data: toIsoDate(data),
+      tipo: ehTrabalho ? 'trabalho' : 'folga',
+      entrada1: ehTrabalho ? h.entrada : null,
+      saida1:   ehTrabalho ? h.saida_intervalo : null,
+      entrada2: ehTrabalho ? h.retorno_intervalo : null,
+      saida2:   ehTrabalho ? h.saida : null,
+      entrada3: null, saida3: null, entrada4: null, saida4: null,
+      fim_noturno: null,
+    });
+  }
+
+  return dias;
+}
+
+/**
  * Persiste (upsert) os dias gerados na tabela escalas.
  * Substitui qualquer registro existente para o mesmo funcionário/data.
  * Ativa automaticamente usa_escala = 1 para o funcionário.

@@ -184,6 +184,67 @@ GET /api/relogios/saude
 ```
 Retorna o último heartbeat registrado (para exibir no painel de saúde do frontend).
 
+> **Vários Syncs por empresa:** uma empresa com lojas em redes não interligadas
+> tem um Sync por loja, cada um marcado (no próprio Sync) só com os relógios da
+> sua rede. Por isso a lista `relogios` do heartbeat é **mesclada por id**, não
+> substituída — o Sync da loja A não apaga o status dos relógios da loja B. Cada
+> item ganha o próprio `recebido_em`, e a tela marca como "sem comunicação" o
+> relógio que deixou de ser reportado há mais de 10 min. Itens de relógios
+> removidos/inativados são descartados no merge.
+
+---
+
+### Leitura de marcações por sistema externo (ponte para o Velox)
+
+Uso: o Sirrus Ponto WEB serve só de ponte — o Sync de cada loja coleta o
+relógio e grava aqui; o **Sirrus Ponto Coletor** (Delphi) busca as batidas e
+grava no banco do Velox. A conta ponte não precisa de funcionários cadastrados:
+toda batida fica em `relogio_marcacoes_importadas` (status `pendente`), e esta
+rota devolve todas, vinculadas ou não. **Não apagar essas batidas** — o Sync
+calcula o próximo NSR a pedir ao relógio pelo `MAX(nsr)` dessa tabela; apagando,
+ele baixaria tudo de novo desde `sincronizar_desde`.
+
+```
+GET /api/relogios/marcacoes/brutas?numero_serie=X&apos_nsr=N&limit=1000
+GET /api/relogios/marcacoes/brutas?relogio_id=X&apos_nsr=N&limit=1000
+```
+
+| Parâmetro | Descrição |
+|---|---|
+| `numero_serie` ou `relogio_id` | Relógio a ler (numero_serie é o que o Velox já conhece) |
+| `apos_nsr` | Devolve NSR **maior** que este (exclusivo). Padrão 0 |
+| `limit` | 1–5000, padrão 1000 |
+
+**Resposta:**
+```json
+{
+  "success": true,
+  "data": {
+    "relogio_id": 12,
+    "numero_serie": "00014003750012345",
+    "marcacoes": [
+      { "nsr": 1501, "cpf": "12345678901", "pis": null, "data_hora": "2026-11-05 08:01:00" }
+    ],
+    "ultimo_nsr": 1501,
+    "tem_mais": false
+  }
+}
+```
+
+- `data_hora` é hora local pura (`AAAA-MM-DD HH:MM:SS`), sem fuso — gravar como está.
+- `cpf` vem preenchido nos modelos `_671`; `pis` nos demais.
+- Ordenado por NSR. 404 se o relógio não existir na empresa do usuário.
+
+**Fluxo do Coletor (por relógio):**
+1. Ler do Velox o último NSR já gravado daquele relógio (`N`).
+2. `GET /relogios/marcacoes/brutas?numero_serie=...&apos_nsr=N`.
+3. Gravar as marcações no Velox **na mesma transação** em que atualiza `N` para `ultimo_nsr`.
+4. Enquanto `tem_mais = true`, repetir com `apos_nsr = ultimo_nsr`.
+
+Autenticação igual ao Sync: `POST /api/auth/login` com `{ "cpf": "...", "password": "..." }`
+→ `access_token` / `refresh_token` (renovar com `POST /api/auth/refresh` + `{ "refresh_token": "..." }`);
+usuário admin da conta ponte.
+
 ---
 
 ### Comunicação (frontend)
