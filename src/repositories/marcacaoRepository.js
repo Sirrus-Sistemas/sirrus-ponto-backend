@@ -5,7 +5,7 @@ import { query } from '../config/database.js';
 const TZ_OFFSET_DEFAULT = process.env.APP_TZ_OFFSET || '-03:00';
 
 /**
- * Hora de corte (0–5) pra decidir se uma batida de madrugada pertence ao dia
+ * Hora de corte pra decidir se uma batida de madrugada pertence ao dia
  * anterior (plantão que atravessa a meia-noite) ou já é o início do turno de
  * hoje. O padrão fixo de 5h cobre a maioria dos turnos (começam de manhã,
  * tarde ou à noite, bem depois da madrugada) — só quando o turno do próprio
@@ -13,14 +13,29 @@ const TZ_OFFSET_DEFAULT = process.env.APP_TZ_OFFSET || '-03:00';
  * que o corte precisa vir mais cedo, com 2h de folga pra chegada adiantada;
  * senão a própria entrada do dia vira a última batida do dia anterior
  * (relatado por cliente com turno de entrada 05:00, batendo ~04:50).
- * Nunca sobe acima de 5h — turno que começa à tarde/noite continua com o
- * corte padrão de sempre, preservando o comportamento pra plantão noturno.
+ *
+ * Turno que atravessa a madrugada e só termina DEPOIS do corte padrão (ex.:
+ * 19h–07h, saída normalmente batida por volta das 06h–07h) tinha o problema
+ * oposto: a própria saída do plantão (depois das 05h) virava a primeira
+ * batida de "hoje" em vez da última de "ontem", juntando duas jornadas
+ * inteiras (a cauda do plantão de ontem + o início do turno de hoje) num
+ * "dia" só — minutos trabalhados e adicional noturno saíam completamente
+ * errados (relatado por cliente com turno 19h–07h, batida de saída ~06h09
+ * virando parte do dia seguinte). Nesse caso o corte avança até a saída
+ * prevista do turno (+1h de folga pra bater um pouco depois do horário),
+ * nunca passando de 10h pra não esticar por engano um turno comum.
  */
-function corteDiaHoras(turnoEntrada) {
+function corteDiaHoras(turnoEntrada, turnoSaida) {
   if (!turnoEntrada) return 5;
   const horaEntrada = parseInt(String(turnoEntrada).slice(0, 2), 10);
   if (!Number.isFinite(horaEntrada)) return 5;
-  return Math.min(5, Math.max(0, horaEntrada - 2));
+  let corte = Math.min(5, Math.max(0, horaEntrada - 2));
+
+  const horaSaida = turnoSaida ? parseInt(String(turnoSaida).slice(0, 2), 10) : NaN;
+  if (Number.isFinite(horaSaida) && horaSaida < horaEntrada) {
+    corte = Math.max(corte, Math.min(10, horaSaida + 1));
+  }
+  return corte;
 }
 
 export const MarcacaoRepository = {
@@ -136,14 +151,14 @@ export const MarcacaoRepository = {
     return { inserida: false, marcacaoId: row?.id ?? null };
   },
 
-  async findByFuncionarioMonth(funcionarioId, year, month, tzOffset = TZ_OFFSET_DEFAULT, turnoEntrada = null) {
+  async findByFuncionarioMonth(funcionarioId, year, month, tzOffset = TZ_OFFSET_DEFAULT, turnoEntrada = null, turnoSaida = null) {
     // DATE_SUB corteHoras shifts the window so madrugada local (antes do corte) belongs
     // ao dia anterior — ver corteDiaHoras() pra como o corte é calculado por funcionário.
     // dia_referencia overrides this automatic grouping for overnight punches beyond o corte.
     // Batidas REP são armazenadas no horário LOCAL do relógio (sem conversão UTC).
     // Para elas, data_hora_local = data_hora direto. Para os demais tipos (online,
     // geo, manual) o valor é UTC e precisa de CONVERT_TZ para o fuso da empresa.
-    const corteHoras = corteDiaHoras(turnoEntrada);
+    const corteHoras = corteDiaHoras(turnoEntrada, turnoSaida);
     return query(
       `SELECT id,
               data_hora,
@@ -196,8 +211,8 @@ export const MarcacaoRepository = {
    * agrupamento por dia_referencia/corte de 5h de findByFuncionarioMonth, mas
    * parametrizada por data início/fim em vez de ano/mês).
    */
-  async findByFuncionarioPeriodo(funcionarioId, dataInicio, dataFim, tzOffset = TZ_OFFSET_DEFAULT, turnoEntrada = null) {
-    const corteHoras = corteDiaHoras(turnoEntrada);
+  async findByFuncionarioPeriodo(funcionarioId, dataInicio, dataFim, tzOffset = TZ_OFFSET_DEFAULT, turnoEntrada = null, turnoSaida = null) {
+    const corteHoras = corteDiaHoras(turnoEntrada, turnoSaida);
     return query(
       `SELECT id,
               data_hora,

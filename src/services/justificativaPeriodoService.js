@@ -87,7 +87,7 @@ export const JustificativaPeriodoService = {
           WHERE funcionario_id = ? AND data BETWEEN ? AND ?`,
         [funcionario.id, dataInicio, dataFim],
       ),
-      MarcacaoRepository.findByFuncionarioPeriodo(funcionario.id, dataInicio, dataFim, tzOffset, funcionario.turno_entrada),
+      MarcacaoRepository.findByFuncionarioPeriodo(funcionario.id, dataInicio, dataFim, tzOffset, funcionario.turno_entrada, funcionario.turno_saida),
       usaEscala ? buscarPorPeriodo(funcionario.id, dataInicio, dataFim) : Promise.resolve([]),
       funcionario.turno_id
         ? query(

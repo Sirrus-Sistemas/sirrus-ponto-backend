@@ -518,7 +518,7 @@ export const EspelhoPontoService = {
     const mesReferencia = `${year}-${pad2(month)}`;
 
     const [rows, feriadosRows, turnoRow, ocorrencias, diasBloqRows, bancoHorasAnteriorRows] = await Promise.all([
-      MarcacaoRepository.findByFuncionarioMonth(funcionarioId, year, month, tzOffset, funcionario?.turno_entrada),
+      MarcacaoRepository.findByFuncionarioMonth(funcionarioId, year, month, tzOffset, funcionario?.turno_entrada, funcionario?.turno_saida),
       FeriadoRepository.listByEmpresaMonth(empresaId, year, month),
       FuncionarioRepository.findTurnoJornada(funcionarioId),
       OcorrenciaRepository.findByFuncionarioMonth(funcionarioId, year, month),
