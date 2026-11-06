@@ -517,7 +517,7 @@ export const EspelhoPontoService = {
 
     const mesReferencia = `${year}-${pad2(month)}`;
 
-    const [rows, feriadosRows, turnoRow, ocorrencias, diasBloqRows, bancoHorasAnteriorRows] = await Promise.all([
+    const [rows, feriadosRows, turnoRow, ocorrencias, diasBloqRows, bancoHorasAnteriorRows, bancoHorasManualMesRows] = await Promise.all([
       MarcacaoRepository.findByFuncionarioMonth(funcionarioId, year, month, tzOffset, funcionario?.turno_entrada, funcionario?.turno_saida),
       FeriadoRepository.listByEmpresaMonth(empresaId, year, month),
       FuncionarioRepository.findTurnoJornada(funcionarioId),
@@ -534,6 +534,20 @@ export const EspelhoPontoService = {
           WHERE funcionario_id = ? AND mes_referencia < ?`,
         [funcionarioId, mesReferencia],
       ),
+      // Lançamentos manuais feitos PARA este mesmo mês (ex.: ajuste retroativo
+      // lançado pelo RH) — não entram no saldo_anterior (mes_referencia não é
+      // < este mês) nem no cálculo automático de extras/débito (que vem só da
+      // ficha), então sem isso o lançamento existia na tabela mas sumia da
+      // ficha até o mês seguinte. Só 'manual': o fechamento automático
+      // ('fechamento_mensal') já É o espelho do extras/débito abaixo — somar
+      // os dois contaria a mesma coisa em dobro depois que o mês é fechado.
+      query(
+        `SELECT tipo_hora, COALESCE(SUM(CASE WHEN tipo = 'credito' THEN minutos ELSE -minutos END), 0) AS saldo
+           FROM banco_horas
+          WHERE funcionario_id = ? AND mes_referencia = ? AND origem = 'manual'
+          GROUP BY tipo_hora`,
+        [funcionarioId, mesReferencia],
+      ),
     ]);
 
     // Saldo transportado de meses anteriores: consolidado num único número,
@@ -541,6 +555,12 @@ export const EspelhoPontoService = {
     // débito deste mês) continuam detalhadas por percentual (padrão Ponto
     // Velox). Ver uso em banco_horas_saldo_anterior_minutos/_atual_minutos.
     const bancoHorasSaldoAnterior = Number(bancoHorasAnteriorRows[0]?.saldo ?? 0);
+    const bancoHorasAjusteManual50pct = Number(
+      bancoHorasManualMesRows.find((r) => r.tipo_hora === '50pct')?.saldo ?? 0,
+    );
+    const bancoHorasAjusteManual100pct = Number(
+      bancoHorasManualMesRows.find((r) => r.tipo_hora === '100pct')?.saldo ?? 0,
+    );
 
     const bloqueadoSet = new Set(diasBloqRows.map((d) => d.data));
 
@@ -1200,12 +1220,17 @@ export const EspelhoPontoService = {
         // no dia de referência não dá pra apurar o líquido do mês, então o
         // saldo atual fica igual ao anterior (mesma guarda de saldo_mes_minutos).
         banco_horas_saldo_anterior_minutos: bancoHorasSaldoAnterior,
+        // Ajuste manual lançado para este mês (ver bancoHorasManualMesRows acima)
+        // — soma no "Horas do Mês" de cada carteira pra aparecer refletido na
+        // ficha assim que lançado, em vez de só no mês seguinte.
+        banco_horas_ajuste_manual_50pct_minutos: bancoHorasAjusteManual50pct,
+        banco_horas_ajuste_manual_100pct_minutos: bancoHorasAjusteManual100pct,
         banco_horas_saldo_atual_minutos:
           minutosPrevistoDia != null
             ? bancoHorasSaldoAnterior
-              + (totalExtras50pct - totalDebitoMinutos)
-              + (totalExtras100pctFinal - totalDebito100pctMinutos)
-            : bancoHorasSaldoAnterior,
+              + (totalExtras50pct - totalDebitoMinutos + bancoHorasAjusteManual50pct)
+              + (totalExtras100pctFinal - totalDebito100pctMinutos + bancoHorasAjusteManual100pct)
+            : bancoHorasSaldoAnterior + bancoHorasAjusteManual50pct + bancoHorasAjusteManual100pct,
       },
     };
   },
