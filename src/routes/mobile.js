@@ -16,6 +16,10 @@ import {
   listarConflitosPontomobileId,
   redefinirSenhaMobile,
   importarCercasDoMobile,
+  listarOcorrenciasPendentes,
+  baixarAnexoOcorrenciaMobile,
+  aprovarOcorrenciaMobile,
+  negarOcorrenciaMobile,
 } from '../services/pontoMobileService.js';
 import { auditar } from '../services/auditService.js';
 import { motivoSenhaFraca } from '../services/authService.js';
@@ -380,6 +384,170 @@ export default async function mobileRoutes(fastify) {
       const id = parseInt(request.params.id, 10);
       const result = await desbloquearBloqueada(id, request.user.id);
       return successResponse(result, 'Batida desbloqueada e adicionada aos registros.');
+    },
+  );
+
+  // ── Aprovação de ocorrências do app mobile ──────────────────────────────────
+
+  fastify.get(
+    '/mobile/ocorrencias/pendentes',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          required: ['filial_id'],
+          properties: {
+            filial_id: { type: 'integer', minimum: 1 },
+            lotacao_id: { type: 'integer', minimum: 1 },
+            funcionario_id: { type: 'integer', minimum: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      const { filial_id, lotacao_id, funcionario_id } = request.query;
+      try {
+        const pendentes = await listarOcorrenciasPendentes(filial_id, lotacao_id ?? null, funcionario_id ?? null);
+        return successResponse(pendentes);
+      } catch (e) {
+        return reply.code(400).send({ error: 'Erro ao buscar ocorrências pendentes', message: e.message });
+      }
+    },
+  );
+
+  fastify.get(
+    '/mobile/ocorrencias/:id/anexo',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'integer', minimum: 1 } },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      try {
+        const { buffer, contentType } = await baixarAnexoOcorrenciaMobile(request.params.id);
+        reply.type(contentType);
+        return reply.send(buffer);
+      } catch (e) {
+        return reply.code(404).send({ error: 'Anexo não encontrado', message: e.message });
+      }
+    },
+  );
+
+  fastify.post(
+    '/mobile/ocorrencias/:id/aprovar',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'integer', minimum: 1 } },
+        },
+        body: {
+          type: 'object',
+          required: ['funcionario_id', 'data_inicio', 'data_fim', 'tipo_ocorrencia_id', 'turno', 'tipo_hora'],
+          properties: {
+            funcionario_id: { type: 'integer', minimum: 1 },
+            data_inicio: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+            data_fim: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+            tipo_ocorrencia_id: { type: 'integer', minimum: 1 },
+            turno: { type: 'string', enum: ['integral', '1_periodo', '2_periodo', '3_periodo', '4_periodo'] },
+            tipo_hora: { type: 'string', enum: ['hora_50_60', 'hora_100'] },
+            quantidade_horas: { type: ['number', 'null'] },
+            informativa: { type: 'integer', minimum: 0, maximum: 1 },
+            descricao: { type: ['string', 'null'] },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      const {
+        funcionario_id, data_inicio, data_fim, tipo_ocorrencia_id,
+        turno, tipo_hora, quantidade_horas, informativa, descricao,
+      } = request.body;
+
+      const [tipo] = await query(
+        'SELECT id FROM tipos_ocorrencia WHERE id = ? AND empresa_id = ?',
+        [tipo_ocorrencia_id, request.empresaId],
+      );
+      if (!tipo) return reply.code(404).send({ error: 'Tipo de ocorrência não encontrado' });
+      const [func] = await query(
+        'SELECT id FROM funcionarios WHERE id = ? AND empresa_id = ?',
+        [funcionario_id, request.empresaId],
+      );
+      if (!func) return reply.code(404).send({ error: 'Funcionário não encontrado' });
+
+      let resultado;
+      try {
+        resultado = await aprovarOcorrenciaMobile({
+          mobileId: request.params.id,
+          funcionarioId: funcionario_id,
+          dataInicio: data_inicio,
+          dataFim: data_fim,
+          tipoOcorrenciaId: tipo_ocorrencia_id,
+          turno,
+          tipoHora: tipo_hora,
+          quantidadeHoras: quantidade_horas ?? null,
+          informativa,
+          descricao,
+          adminFuncionarioId: request.user.id,
+        });
+      } catch (e) {
+        return reply.code(400).send({ error: 'Erro ao aprovar ocorrência', message: e.message });
+      }
+
+      auditar({
+        acao: 'INSERT',
+        tabela: 'ocorrencias',
+        registro_id: resultado.ocorrenciaId,
+        dados_anteriores: null,
+        dados_novos: {
+          origem: 'mobile', mobile_id: request.params.id, funcionario_id,
+          data_inicio, data_fim, tipo_ocorrencia_id, turno, tipo_hora,
+        },
+        usuario_id: request.user.id,
+        empresa_id: request.empresaId,
+        ip: request.ip,
+      });
+      return successResponse(resultado, 'Ocorrência aprovada e lançada.');
+    },
+  );
+
+  fastify.post(
+    '/mobile/ocorrencias/:id/negar',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'integer', minimum: 1 } },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      try {
+        await negarOcorrenciaMobile({ mobileId: request.params.id, adminFuncionarioId: request.user.id });
+      } catch (e) {
+        return reply.code(400).send({ error: 'Erro ao negar ocorrência', message: e.message });
+      }
+      auditar({
+        acao: 'UPDATE',
+        tabela: 'ocorrencias_mobile_aprovacao',
+        registro_id: request.params.id,
+        dados_anteriores: null,
+        dados_novos: { status: 'N' },
+        usuario_id: request.user.id,
+        empresa_id: request.empresaId,
+        ip: request.ip,
+      });
+      return successResponse(null, 'Ocorrência negada.');
     },
   );
 }

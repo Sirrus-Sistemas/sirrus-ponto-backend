@@ -12,9 +12,20 @@
 import { query } from '../config/database.js';
 import { resolverParaFuncionario } from './cercaService.js';
 import { PONTO_DUPLICATA_JANELA_SEG } from '../config/constants.js';
+import { OcorrenciaRepository } from '../repositories/ocorrenciaRepository.js';
 import crypto from 'crypto';
 
 const BASE_URL = (process.env.PONTOMOBILE_URL || '').replace(/\/$/, '');
+
+// 'I' (Integral) e 'T1'..'T4' são os valores do enum `turno` na API do Ponto
+// Mobile (migration add_option_enum_table_ocorrencia) — mapeia pro enum local.
+const TURNO_MOBILE_PARA_LOCAL = {
+  I: 'integral',
+  T1: '1_periodo',
+  T2: '2_periodo',
+  T3: '3_periodo',
+  T4: '4_periodo',
+};
 
 // ── Token cache (memória; reinicia junto com o processo) ─────────────────────
 let _token = null;
@@ -1094,6 +1105,185 @@ export async function desbloquearBloqueada(id, usuarioId) {
   );
 
   return { bloqueada, movida: true };
+}
+
+// ── Aprovação de ocorrências do app mobile ────────────────────────────────────
+//
+// Diferente das batidas (aprovar = só muda o status e copia pra `marcacoes`),
+// uma ocorrência do app só traz um rótulo livre (`motivo_id` → texto) e uma
+// justificativa — não tem tipo_ocorrencia_id/tipo_hora daqui, que são
+// obrigatórios pra criar uma ocorrência local (ver POST /ocorrencias). Por
+// isso aprovar exige o admin classificar (escolher o Tipo de Ocorrência e
+// confirmar turno/tipo de hora) antes: só então vira um lançamento real,
+// e o status no mobile muda pra 'C' junto.
+
+/**
+ * Pagina `/admin/motivos` (não filtra por empresa) e devolve só os da empresa
+ * pedida — usado pra traduzir `motivo_id` num rótulo legível na tela de
+ * aprovação. Mesmo estilo de paginação de `_buscarEmpresaPorCnpj`.
+ */
+async function _buscarMotivosDaEmpresa(mobileEmpresaId) {
+  const resultado = [];
+  let path = '/admin/motivos';
+  while (path) {
+    const res = await _request('GET', path);
+    const pageItems = res.data ?? [];
+    resultado.push(...pageItems.filter((m) => Number(m.empresa_id) === Number(mobileEmpresaId)));
+    path = res.next_page_url ? res.next_page_url.replace(`${BASE_URL}/api/v1`, '') : null;
+  }
+  return resultado;
+}
+
+/**
+ * Mapa mobileFuncionarioId → { id, nome } dos funcionários locais da filial
+ * (e, opcionalmente, lotação/funcionário específico). Mesma guarda de
+ * pontomobile_id duplicado usada em `_buscarEMapear` — funcionário com id
+ * ambíguo fica fora do mapa (a ocorrência dele não aparece até corrigir).
+ */
+async function _mapaFuncionariosPorMobileId(filialId, lotacaoId, funcionarioId) {
+  const conditions = ['f.filial_id = ?', 'f.ativo = 1', 'f.pontomobile_id IS NOT NULL'];
+  const params = [filialId];
+  if (lotacaoId) { conditions.push('f.lotacao_id = ?'); params.push(lotacaoId); }
+  if (funcionarioId) { conditions.push('f.id = ?'); params.push(funcionarioId); }
+  const rows = await query(
+    `SELECT f.id, f.nome, f.pontomobile_id FROM funcionarios f WHERE ${conditions.join(' AND ')}`,
+    params,
+  );
+
+  const porPontomobileId = new Map();
+  for (const r of rows) {
+    const pmId = Number(r.pontomobile_id);
+    const lista = porPontomobileId.get(pmId) ?? [];
+    lista.push(r);
+    porPontomobileId.set(pmId, lista);
+  }
+  const mapa = new Map();
+  for (const [pmId, lista] of porPontomobileId) {
+    if (lista.length > 1) continue; // conflito — já reportado na tela de sincronização
+    mapa.set(pmId, { id: lista[0].id, nome: lista[0].nome });
+  }
+  return mapa;
+}
+
+/**
+ * Lista ocorrências do app mobile aguardando aprovação (status 'A') numa
+ * filial, já mapeadas pro funcionário local e com o rótulo do motivo.
+ */
+export async function listarOcorrenciasPendentes(filialId, lotacaoId = null, funcionarioId = null) {
+  const [fil] = await query(
+    'SELECT id, pontomobile_id FROM filiais WHERE id = ? LIMIT 1',
+    [filialId],
+  );
+  if (!fil?.pontomobile_id) throw new Error('Filial não sincronizada com o mobile. Sincronize a filial primeiro.');
+
+  const data = await _request('GET', `/admin/empresas/${fil.pontomobile_id}/ocorrencias/after/0`);
+  const items = Array.isArray(data) ? data : (data?.data ?? []);
+
+  const [funcMap, motivos] = await Promise.all([
+    _mapaFuncionariosPorMobileId(filialId, lotacaoId, funcionarioId),
+    _buscarMotivosDaEmpresa(fil.pontomobile_id),
+  ]);
+  const motivoLabel = new Map(motivos.map((m) => [Number(m.id), m.descricao]));
+
+  return items
+    .filter((i) => i.status === 'A' && funcMap.has(Number(i.funcionario_id)))
+    .map((i) => {
+      const func = funcMap.get(Number(i.funcionario_id));
+      return {
+        mobile_id: Number(i.id),
+        funcionario_id: func.id,
+        funcionario_nome: func.nome,
+        data_inicio: String(i.data_inicio).slice(0, 10),
+        data_fim: String(i.data_fim).slice(0, 10),
+        turno: TURNO_MOBILE_PARA_LOCAL[i.turno] ?? 'integral',
+        motivo_label: i.motivo_id != null ? (motivoLabel.get(Number(i.motivo_id)) ?? `Motivo #${i.motivo_id}`) : null,
+        justificativa: i.justificativa ?? null,
+        horas_app: i.horas != null ? Number(i.horas) : null,
+        tem_anexo: !!i.arquivo,
+        criada_em: i.created_at ?? null,
+      };
+    })
+    .sort((a, b) => a.data_inicio.localeCompare(b.data_inicio));
+}
+
+/**
+ * Baixa o anexo de uma ocorrência (armazenado no disco 'local', privado, da
+ * API PHP — por isso só dá pra buscar autenticado por aqui e repassar pro
+ * navegador, diferente da foto de batida que é servida direto do storage
+ * público do mobile).
+ */
+export async function baixarAnexoOcorrenciaMobile(mobileId) {
+  if (!BASE_URL) throw new Error('PONTOMOBILE_URL não configurada.');
+  const token = await _getToken();
+  const res = await fetch(`${BASE_URL}/api/v1/admin/ocorrencias/${mobileId}/file`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Não foi possível baixar o anexo (HTTP ${res.status}).`);
+  const contentType = res.headers.get('content-type') || 'application/octet-stream';
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return { buffer, contentType };
+}
+
+/**
+ * Resolve o pontomobile_id do admin que está decidindo — mesma lógica usada
+ * em `decidirMarcacoesMobile` (a API mobile exige `avaliador_id`).
+ */
+async function _resolverAvaliadorId(adminFuncionarioId, acao) {
+  let [{ pontomobile_id: avaliadorId } = {}] = await query(
+    'SELECT pontomobile_id FROM funcionarios WHERE id = ?',
+    [adminFuncionarioId],
+  );
+  if (!avaliadorId) {
+    try {
+      avaliadorId = await syncFuncionario(adminFuncionarioId);
+    } catch (e) {
+      throw new Error(
+        `Seu usuário precisa estar sincronizado com o Ponto Mobile para ${acao} (${e.message}). ` +
+        `Sincronize-se em "Ponto Mobile" → Funcionários.`,
+      );
+    }
+  }
+  return avaliadorId;
+}
+
+/**
+ * Aprova uma ocorrência pendente do app: cria o lançamento local (com a
+ * classificação escolhida pelo admin) e só então marca 'C' no mobile. Se o
+ * lançamento local falhar (ex.: conflito com outra ocorrência do período),
+ * o status no mobile não muda — fica pendente pra tentar de novo.
+ */
+export async function aprovarOcorrenciaMobile({
+  mobileId, funcionarioId, dataInicio, dataFim,
+  tipoOcorrenciaId, turno, tipoHora, quantidadeHoras, informativa, descricao,
+  adminFuncionarioId,
+}) {
+  const avaliadorId = await _resolverAvaliadorId(adminFuncionarioId, 'aprovar ocorrências');
+
+  const conflito = await OcorrenciaRepository.existeConflito(funcionarioId, dataInicio, dataFim, turno);
+  if (conflito) {
+    throw new Error('Já existe uma ocorrência lançada que colide com esse período para este funcionário — ajuste antes de aprovar.');
+  }
+
+  const result = await query(
+    `INSERT INTO ocorrencias
+       (funcionario_id, data_inicio, data_fim, tipo, tipo_ocorrencia_id,
+        turno, tipo_hora, quantidade_horas, informativa, descricao, lancado_por)
+     VALUES (?, ?, ?, 'outros', ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      funcionarioId, dataInicio, dataFim, tipoOcorrenciaId, turno, tipoHora,
+      quantidadeHoras ?? null, informativa ? 1 : 0, descricao?.trim() || null, adminFuncionarioId,
+    ],
+  );
+
+  await _request('PUT', `/admin/ocorrencias/${mobileId}/status`, { status: 'C', avaliador_id: avaliadorId });
+
+  return { ocorrenciaId: result.insertId };
+}
+
+/** Nega uma ocorrência pendente do app — não cria nada localmente. */
+export async function negarOcorrenciaMobile({ mobileId, adminFuncionarioId }) {
+  const avaliadorId = await _resolverAvaliadorId(adminFuncionarioId, 'negar ocorrências');
+  await _request('PUT', `/admin/ocorrencias/${mobileId}/status`, { status: 'N', avaliador_id: avaliadorId });
 }
 
 // ── Status da configuração ───────────────────────────────────────────────────
