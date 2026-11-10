@@ -4,6 +4,7 @@ import { successResponse } from '../utils/helpers.js';
 import { EmpresaRepository } from '../repositories/empresaRepository.js';
 import { gerarModeloLotacoes, importarLotacoes } from '../services/importLotacoesService.js';
 import { gerarModeloTurnos, importarTurnos } from '../services/importTurnosService.js';
+import { gerarModeloFeriados, importarFeriados, listarFeriadosNacionaisApi, importarFeriadoNacionalApi } from '../services/importFeriadosService.js';
 
 function calcCargaMinutos(entrada, saida_intervalo, retorno_intervalo, saida) {
   if (!entrada || !saida) return 0;
@@ -655,5 +656,72 @@ export default async function cadastrosRoutes(fastify) {
     if (!existing) return reply.code(404).send({ error: 'Feriado não encontrado' });
     await query('DELETE FROM feriados WHERE id = ?', [request.params.id]);
     return successResponse(null, 'Feriado excluído');
+  });
+
+  // ── Import de feriados (planilha) ───────────────────────────────────
+
+  fastify.get('/feriados/importar/modelo', {
+    preHandler: [authorize('admin')],
+  }, async (request, reply) => {
+    const buffer = await gerarModeloFeriados();
+    reply
+      .header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      .header('Content-Disposition', 'attachment; filename="modelo-feriados.xlsx"')
+      .send(buffer);
+  });
+
+  fastify.post('/feriados/importar', {
+    preHandler: [authorize('admin')],
+  }, async (request, reply) => {
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ message: 'Envie a planilha .xlsx.' });
+    const buffer = await file.toBuffer();
+
+    const resultado = await importarFeriados(buffer, request.empresaId);
+    if (resultado.erros) return reply.code(422).send({ message: 'Corrija os erros e envie novamente.', erros: resultado.erros });
+    return reply.code(201).send(successResponse(resultado, `${resultado.importados} feriado(s) importado(s).`));
+  });
+
+  // ── Feriados nacionais via BrasilAPI (lista + importa um por um) ─────
+
+  fastify.get('/feriados/nacionais-api', {
+    preHandler: [authorize('admin')],
+    schema: {
+      querystring: {
+        type: 'object',
+        required: ['ano'],
+        properties: {
+          ano: { type: 'integer', minimum: 2000, maximum: 2100 },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    try {
+      const itens = await listarFeriadosNacionaisApi(request.empresaId, request.query.ano);
+      return successResponse(itens);
+    } catch (e) {
+      return reply.code(400).send({ error: 'Erro ao consultar feriados nacionais', message: e.message });
+    }
+  });
+
+  fastify.post('/feriados/nacionais-api/importar', {
+    preHandler: [authorize('admin')],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['data', 'nome'],
+        properties: {
+          data: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+          nome: { type: 'string', minLength: 2, maxLength: 150 },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    try {
+      const resultado = await importarFeriadoNacionalApi(request.empresaId, request.body);
+      return reply.code(201).send(successResponse(resultado, 'Feriado importado.'));
+    } catch (e) {
+      return reply.code(400).send({ error: 'Erro ao importar feriado', message: e.message });
+    }
   });
 }
