@@ -145,7 +145,7 @@ export const FuncionarioRepository = {
   /**
    * Lista funcionários com filtros e paginação.
    */
-  async findAll(empresaId, { filialId, departamentoId, lotacaoId, ativo, controlaPonto, search, limit, offset }) {
+  async findAll(empresaId, { filialId, departamentoId, lotacaoId, ativo, controlaPonto, search, cargo, limit, offset }) {
     let sql = `
       SELECT f.id, f.nome, f.email, f.cpf, f.pis, f.cargo, f.matricula, f.role, f.ativo, f.usa_escala, f.controla_ponto,
              f.filial_id, f.lotacao_id, f.data_admissao, f.foto_path,
@@ -194,6 +194,10 @@ export const FuncionarioRepository = {
       const digitsTerm = digits.length > 0 ? `%${digits}%` : term;
       sql += ' AND (f.nome LIKE ? OR f.email LIKE ? OR f.matricula LIKE ? OR f.cpf LIKE ? OR f.pis LIKE ?)';
       params.push(term, term, term, digitsTerm, digitsTerm);
+    }
+    if (cargo) {
+      sql += ' AND f.cargo LIKE ?';
+      params.push(`%${cargo}%`);
     }
 
     // Count total — usa [\s\S]+? para cruzar quebras de linha
