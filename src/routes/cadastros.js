@@ -18,6 +18,55 @@ function calcCargaMinutos(entrada, saida_intervalo, retorno_intervalo, saida) {
   return Math.max(0, toMin(saida) - toMin(entrada));
 }
 
+/**
+ * Soma os pares (entrada/saída) de um turno com 3 ou 4 períodos (6 ou 8
+ * horários em `batida_times_json`) — `calcCargaMinutos` só enxerga o 1º
+ * intervalo (4 colunas legadas: entrada/saida_intervalo/retorno_intervalo/
+ * saida), então um turno tipo 05:00-07:30 / 11:30-14:30 / 15:00-17:30 virava
+ * "05:00 até 17:30 com 1 intervalo" = 12h ao invés das 8h reais (o 2º
+ * intervalo, 14:30-15:00, era contado como trabalhado).
+ */
+function calcCargaMinutosBatidas(times) {
+  if (!Array.isArray(times) || times.length < 2 || times.length % 2 !== 0) return 0;
+  const toMin = (t) => {
+    const p = String(t).split(':');
+    return parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
+  };
+  let total = 0;
+  for (let i = 0; i < times.length; i += 2) {
+    if (!times[i] || !times[i + 1]) continue;
+    total += Math.max(0, toMin(times[i + 1]) - toMin(times[i]));
+  }
+  return total;
+}
+
+function parseBatidaTimesJson(json) {
+  if (!json) return null;
+  try {
+    const arr = JSON.parse(json);
+    return Array.isArray(arr) ? arr : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Carga diária "de verdade" de um turno: usa `batida_times_json` (todos os
+ * períodos) quando ele tem mais pontos que o modelo legado de 4 colunas —
+ * cai pro cálculo de 2 períodos só quando não há nada melhor.
+ */
+function cargaDiariaMinutos({ entrada, saida_intervalo, retorno_intervalo, saida, batida_times_json }) {
+  const times = parseBatidaTimesJson(batida_times_json);
+  if (times && times.length > 4) return calcCargaMinutosBatidas(times);
+  return calcCargaMinutos(entrada, saida_intervalo, retorno_intervalo, saida);
+}
+
+function minutosParaTime(mins) {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+}
+
 function normalizarBatidasEsperadas(val) {
   const n = parseInt(val, 10);
   if (!Number.isFinite(n) || n < 2 || n > 24 || n % 2 !== 0) return 8;
@@ -249,18 +298,19 @@ export default async function cadastrosRoutes(fastify) {
   }, async (request, reply) => {
     const d = request.body;
     const batidas = normalizarBatidasEsperadas(d.batidas_esperadas_dia);
+    const cargaMin = cargaDiariaMinutos(d);
     const result = await query(
       `INSERT INTO turnos
        (empresa_id, nome, entrada, saida_intervalo, retorno_intervalo, saida,
         tolerancia_atraso_min, tolerancia_extra_min, intervalo_minimo_min, tipo, batidas_esperadas_dia,
-        batida_times_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        batida_times_json, carga_horaria_diaria)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         request.empresaId, d.nome, d.entrada, d.saida_intervalo,
         d.retorno_intervalo, d.saida,
         d.tolerancia_atraso_min || 10, d.tolerancia_extra_min || 10,
         d.intervalo_minimo_min || 60, d.tipo || 'fixo', batidas,
-        d.batida_times_json || null,
+        d.batida_times_json || null, minutosParaTime(cargaMin),
       ]
     );
     return reply.code(201).send(successResponse({ id: result.insertId, ...d }, 'Turno criado'));
@@ -288,6 +338,22 @@ export default async function cadastrosRoutes(fastify) {
 
     if (fields.length === 0) {
       return reply.code(400).send({ error: 'Nenhum campo para atualizar' });
+    }
+
+    // Recalcula a carga diária sempre que o horário puder ter mudado — mescla
+    // o que veio no body com o que já está salvo, pra não precisar que o
+    // cliente mande os 4 campos legados + o JSON toda vez.
+    const camposHorario = ['entrada', 'saida_intervalo', 'retorno_intervalo', 'saida', 'batida_times_json'];
+    if (camposHorario.some((k) => d[k] !== undefined)) {
+      const [atual] = await query(
+        'SELECT entrada, saida_intervalo, retorno_intervalo, saida, batida_times_json FROM turnos WHERE id = ? AND empresa_id = ?',
+        [request.params.id, request.empresaId],
+      );
+      if (atual) {
+        const mesclado = { ...atual, ...d };
+        fields.push('carga_horaria_diaria = ?');
+        values.push(minutosParaTime(cargaDiariaMinutos(mesclado)));
+      }
     }
 
     values.push(request.params.id, request.empresaId);
@@ -359,15 +425,46 @@ export default async function cadastrosRoutes(fastify) {
     },
   }, async (request, reply) => {
     const turnoId = parseInt(request.params.id, 10);
-    const [turno] = await query('SELECT id FROM turnos WHERE id = ? AND empresa_id = ?', [turnoId, request.empresaId]);
+    const [turno] = await query(
+      'SELECT entrada, saida_intervalo, retorno_intervalo, saida, batida_times_json FROM turnos WHERE id = ? AND empresa_id = ?',
+      [turnoId, request.empresaId],
+    );
     if (!turno) return reply.code(404).send({ error: 'Turno não encontrado' });
 
     const dias = request.body;
 
+    // Essa tela só edita 4 campos (1 intervalo) por dia — insuficiente pra um
+    // turno com 3-4 períodos (ex.: 05:00-07:30 / 11:30-14:30 / 15:00-17:30).
+    // Pro dia que continua IGUAL ao padrão do turno, usa a carga certa (soma
+    // de todos os períodos do batida_times_json) em vez de recalcular só com
+    // esses 4 campos — isso é o que torna um dia realmente customizado (ex.:
+    // sábado mais curto) correto e, ao mesmo tempo, não quebra os dias que só
+    // estão herdando o horário normal do turno.
+    const hhmm = (v) => (v ? String(v).slice(0, 5) : null);
+    const turnoTimes = parseBatidaTimesJson(turno.batida_times_json);
+    const turnoTemMaisPeriodos = Array.isArray(turnoTimes) && turnoTimes.length > 4;
+    const turnoCargaCorreta = turnoTemMaisPeriodos ? calcCargaMinutosBatidas(turnoTimes) : null;
+    const turnoDefault = {
+      entrada: hhmm(turno.entrada),
+      saida_intervalo: hhmm(turno.saida_intervalo),
+      retorno_intervalo: hhmm(turno.retorno_intervalo),
+      saida: hhmm(turno.saida),
+    };
+
     await transaction(async (conn) => {
       await conn.execute('DELETE FROM turno_horarios WHERE turno_id = ?', [turnoId]);
       for (const d of dias) {
-        const carga = d.trabalha ? calcCargaMinutos(d.entrada, d.saida_intervalo, d.retorno_intervalo, d.saida) : 0;
+        let carga = 0;
+        if (d.trabalha) {
+          const ehHorarioPadrao = turnoTemMaisPeriodos
+            && hhmm(d.entrada) === turnoDefault.entrada
+            && hhmm(d.saida_intervalo) === turnoDefault.saida_intervalo
+            && hhmm(d.retorno_intervalo) === turnoDefault.retorno_intervalo
+            && hhmm(d.saida) === turnoDefault.saida;
+          carga = ehHorarioPadrao
+            ? turnoCargaCorreta
+            : calcCargaMinutos(d.entrada, d.saida_intervalo, d.retorno_intervalo, d.saida);
+        }
         await conn.execute(
           `INSERT INTO turno_horarios (turno_id, dia_semana, trabalha, entrada, saida_intervalo, retorno_intervalo, saida, carga_minutos)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
