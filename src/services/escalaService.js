@@ -4,6 +4,7 @@ import { query, transaction } from '../config/database.js';
 const CICLOS = {
   '1x5':          [1, 1, 1, 1, 1, 0],            // 6 dias
   '1x6':          [1, 1, 1, 1, 1, 1, 0],          // 7 dias
+  '5x2':          [1, 1, 1, 1, 1, 0, 0],          // 7 dias
   '12x36':        [1, 0],                          // 2 dias
   '24x72':        [1, 0, 0, 0],                    // 4 dias
   '12x24x12x36':  [1, 0, 1, 0, 0],                // 5 dias

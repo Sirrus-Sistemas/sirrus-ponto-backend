@@ -18,7 +18,7 @@ const gerarSchema = {
       funcionario_id: { type: 'integer' },
       data_inicio:    { type: 'string', format: 'date' },
       data_fim:       { type: 'string', format: 'date' },
-      tipo_ciclo:     { type: 'string', enum: ['1x5', '1x6', '12x36', '24x72', '12x24x12x36'] },
+      tipo_ciclo:     { type: 'string', enum: ['1x5', '1x6', '5x2', '12x36', '24x72', '12x24x12x36'] },
       inicio_ciclo:   { type: 'string', format: 'date' },
       entrada1: { type: 'string' },
       saida1:   { type: 'string' },
