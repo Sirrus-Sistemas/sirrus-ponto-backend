@@ -108,6 +108,54 @@ function cargaHorariaParaMinutos(val) {
   return null;
 }
 
+function parseBatidaTimesJson(json) {
+  if (!json) return null;
+  try {
+    const arr = JSON.parse(json);
+    return Array.isArray(arr) ? arr : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Horários previstos do dia (pra alinhar as colunas do grid/ficha) — mesma
+ * limitação encontrada no cálculo de carga diária (ver cadastros.js): o
+ * modelo legado de 4 campos (entrada/saida_intervalo/retorno_intervalo/
+ * saida) só representa 1 intervalo, então um turno com 3-4 períodos virava
+ * só 4 horários previstos, enquanto as batidas reais eram 6-8. Isso fazia o
+ * algoritmo de casamento (buildSlots, no frontend) sobrar 2 batidas reais do
+ * MEIO da jornada sem previsto correspondente, jogando-as pras colunas
+ * seguintes (E3/S3) fora de ordem cronológica — a "ficha com a ordem
+ * errada" que o cliente via.
+ *
+ * `batida_times_json` do turno tem a jornada completa (todos os períodos) —
+ * usa ele no lugar dos 4 campos legados sempre que o dia em questão está no
+ * horário PADRÃO do turno (sem customização por dia da semana); um dia
+ * genuinamente customizado (ex.: sábado mais curto) só tem mesmo os 4 campos
+ * legados pra oferecer, então cai nesse caso normalmente.
+ */
+function horariosPrevistosDoDia({ entrada, saida_intervalo, retorno_intervalo, saida }, turnoRow) {
+  const hhmm = (v) => (v ? String(v).slice(0, 5) : null);
+  const diaAtual = { entrada: hhmm(entrada), saida_intervalo: hhmm(saida_intervalo), retorno_intervalo: hhmm(retorno_intervalo), saida: hhmm(saida) };
+  const turnoDefault = {
+    entrada: hhmm(turnoRow?.turno_entrada_padrao),
+    saida_intervalo: hhmm(turnoRow?.turno_saida_intervalo_padrao),
+    retorno_intervalo: hhmm(turnoRow?.turno_retorno_intervalo_padrao),
+    saida: hhmm(turnoRow?.turno_saida_padrao),
+  };
+  const ehHorarioPadrao = diaAtual.entrada === turnoDefault.entrada
+    && diaAtual.saida_intervalo === turnoDefault.saida_intervalo
+    && diaAtual.retorno_intervalo === turnoDefault.retorno_intervalo
+    && diaAtual.saida === turnoDefault.saida;
+
+  const turnoTimes = parseBatidaTimesJson(turnoRow?.batida_times_json);
+  if (ehHorarioPadrao && Array.isArray(turnoTimes) && turnoTimes.length > 4) {
+    return turnoTimes.map((h) => String(h).slice(0, 5));
+  }
+  return [entrada, saida_intervalo, retorno_intervalo, saida].filter(Boolean).map((h) => String(h).slice(0, 5));
+}
+
 function eachCalendarDay(year, month) {
   const last = new Date(year, month, 0).getDate();
   const days = [];
@@ -1071,10 +1119,18 @@ export const EspelhoPontoService = {
       } else if (hasTurnoHorarios) {
         const th = turnoHorariosMap.get(dow);
         if (th && th.trabalha) {
-          horarios_previstos = [th.entrada, th.saida_intervalo, th.retorno_intervalo, th.saida].filter(Boolean).map((h) => String(h).slice(0, 5));
+          horarios_previstos = horariosPrevistosDoDia(th, turnoRow);
         }
       } else if (funcionario) {
-        horarios_previstos = [funcionario.turno_entrada, funcionario.turno_saida_intervalo, funcionario.turno_retorno_intervalo, funcionario.turno_saida].filter(Boolean).map((h) => String(h).slice(0, 5));
+        horarios_previstos = horariosPrevistosDoDia(
+          {
+            entrada: funcionario.turno_entrada,
+            saida_intervalo: funcionario.turno_saida_intervalo,
+            retorno_intervalo: funcionario.turno_retorno_intervalo,
+            saida: funcionario.turno_saida,
+          },
+          turnoRow,
+        );
       }
 
       // horarios_previstos vai SEMPRE com a jornada completa do dia (não só os

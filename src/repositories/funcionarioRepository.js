@@ -89,6 +89,11 @@ export const FuncionarioRepository = {
               t.nome AS turno_nome,
               t.carga_horaria_diaria AS carga,
               t.batidas_esperadas_dia AS batidas_esperadas_dia,
+              t.entrada AS turno_entrada_padrao,
+              t.saida_intervalo AS turno_saida_intervalo_padrao,
+              t.retorno_intervalo AS turno_retorno_intervalo_padrao,
+              t.saida AS turno_saida_padrao,
+              t.batida_times_json AS batida_times_json,
               COALESCE(t.tolerancia_atraso_min, 0) AS tolerancia_atraso_min,
               COALESCE(t.tolerancia_extra_min,  0) AS tolerancia_extra_min
          FROM funcionarios f
