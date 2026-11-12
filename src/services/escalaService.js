@@ -201,12 +201,14 @@ export async function listarFuncionariosComEscala(empresaId, filialId) {
     SELECT f.id, f.nome, f.matricula, f.cargo,
            fi.nome AS filial_nome,
            d.nome  AS departamento_nome,
+           f.lotacao_id, lo.nome AS lotacao_nome,
            t.nome  AS turno_nome,
            t.entrada AS turno_entrada, t.saida AS turno_saida,
            t.saida_intervalo, t.retorno_intervalo
     FROM funcionarios f
     LEFT JOIN filiais fi ON f.filial_id = fi.id
     LEFT JOIN departamentos d ON f.departamento_id = d.id
+    LEFT JOIN lotacoes lo ON f.lotacao_id = lo.id
     LEFT JOIN turnos t ON f.turno_id = t.id
     WHERE f.empresa_id = ? AND f.ativo = 1 AND f.controla_ponto = 1
   `;
