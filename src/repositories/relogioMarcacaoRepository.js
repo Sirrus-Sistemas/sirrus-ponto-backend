@@ -185,6 +185,23 @@ export const RelogioMarcacaoRepository = {
   },
 
   /**
+   * Data (AAAA-MM-DD) da marcação mais recente já vista deste relógio, ou
+   * null se nenhuma ainda. Usada pelo sistema de coleta local para filtrar
+   * por `initial_date` em vez de `initial_nsr` — alguns equipamentos control
+   * iD (classe 671, visto em campo) têm o filtro por NSR quebrado no
+   * get_afd.fcgi (sempre devolve vazio pra NSR != 0), mas o filtro por data
+   * funciona normalmente. Reenviar o dia inteiro é seguro: a deduplicação
+   * por NSR no backend ignora o que já foi importado.
+   */
+  async ultimaDataPorRelogio(relogioId) {
+    const rows = await query(
+      "SELECT DATE_FORMAT(MAX(data_hora), '%Y-%m-%d') AS ultima_data FROM relogio_marcacoes_importadas WHERE relogio_id = ?",
+      [relogioId],
+    );
+    return rows[0]?.ultima_data ?? null;
+  },
+
+  /**
    * Leitura das marcações brutas de um relógio, em ordem de NSR, a partir de
    * um NSR (exclusivo) — para um sistema externo (Sirrus Ponto Coletor/Velox)
    * consumir as batidas coletadas pelo Sync. Devolve tudo, vinculado ou não:

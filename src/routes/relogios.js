@@ -165,8 +165,11 @@ export default async function relogiosRoutes(fastify) {
     const relogio = await RelogioRepository.findById(relogioId, request.empresaId);
     if (!relogio) return reply.code(404).send({ message: 'Relógio não encontrado.' });
 
-    const ultimoNsr = await RelogioMarcacaoRepository.ultimoNsrPorRelogio(relogioId);
-    return successResponse({ ultimo_nsr: ultimoNsr });
+    const [ultimoNsr, ultimaData] = await Promise.all([
+      RelogioMarcacaoRepository.ultimoNsrPorRelogio(relogioId),
+      RelogioMarcacaoRepository.ultimaDataPorRelogio(relogioId),
+    ]);
+    return successResponse({ ultimo_nsr: ultimoNsr, ultima_data: ultimaData });
   });
 
   // ── POST /api/relogios/marcacoes  (sistema de coleta local)
