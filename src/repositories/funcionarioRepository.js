@@ -150,7 +150,7 @@ export const FuncionarioRepository = {
   /**
    * Lista funcionários com filtros e paginação.
    */
-  async findAll(empresaId, { filialId, departamentoId, lotacaoId, ativo, controlaPonto, search, cargo, limit, offset }) {
+  async findAll(empresaId, { filialId, departamentoId, lotacaoId, turnoId, ativo, controlaPonto, search, cargo, limit, offset }) {
     let sql = `
       SELECT f.id, f.nome, f.email, f.cpf, f.pis, f.cargo, f.matricula, f.role, f.ativo, f.usa_escala, f.controla_ponto,
              f.filial_id, f.lotacao_id, f.data_admissao, f.foto_path,
@@ -179,6 +179,10 @@ export const FuncionarioRepository = {
     if (lotacaoId) {
       sql += ' AND f.lotacao_id = ?';
       params.push(lotacaoId);
+    }
+    if (turnoId) {
+      sql += ' AND f.turno_id = ?';
+      params.push(turnoId);
     }
     if (ativo !== undefined) {
       sql += ' AND f.ativo = ?';

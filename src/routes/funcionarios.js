@@ -149,7 +149,7 @@ export default async function funcionarioRoutes(fastify) {
   // ─── GET /funcionarios ────────────────────────────────────────────
   fastify.get('/funcionarios', async (request, reply) => {
     const { page, limit, offset } = parsePagination(request.query);
-    const { departamento_id, lotacao_id, ativo, controla_ponto, search, filial_id, cargo } = request.query;
+    const { departamento_id, lotacao_id, turno_id, ativo, controla_ponto, search, filial_id, cargo } = request.query;
 
     // Gestor e funcionário só veem a própria filial; admin pode filtrar ou ver tudo
     const filialId = request.user.role === 'admin'
@@ -160,6 +160,7 @@ export default async function funcionarioRoutes(fastify) {
       filialId,
       departamentoId: departamento_id,
       lotacaoId: lotacao_id ? Number(lotacao_id) : undefined,
+      turnoId: turno_id ? Number(turno_id) : undefined,
       ativo: ativo !== undefined ? parseInt(ativo) : undefined,
       controlaPonto: controla_ponto !== undefined ? parseInt(controla_ponto) : undefined,
       search,
