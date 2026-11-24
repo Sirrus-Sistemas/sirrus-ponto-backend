@@ -76,7 +76,13 @@ async function _request(method, path, body = null, retries = 3) {
     const camposInvalidos = json?.errors
       ? Object.entries(json.errors).map(([campo, msgs]) => `${campo}: ${[].concat(msgs).join('; ')}`).join(' | ')
       : null;
-    throw new Error(`Mobile API ${res.status}: ${detalhe}${camposInvalidos ? ` (${camposInvalidos})` : ''}`);
+    const erro = new Error(`Mobile API ${res.status}: ${detalhe}${camposInvalidos ? ` (${camposInvalidos})` : ''}`);
+    // Recusas de regra de negócio da API mobile (registro não encontrado,
+    // e-mail já usado, validação) viram 409 aqui para a mensagem chegar à tela
+    // — sem statusCode o errorHandler troca tudo por "Erro interno do servidor".
+    // 401/403 ficam de fora de propósito: repassá-los faria o front deslogar.
+    if ([404, 409, 422].includes(res.status)) erro.statusCode = 409;
+    throw erro;
   }
   return json ?? {};
 }
@@ -298,11 +304,25 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
   // 3. Monta payload
   const cpfClean = String(func.cpf || '').replace(/\D/g, '');
   const senhaMobile = func.senha_mobile || cpfClean;
+
+  // No Ponto Mobile o e-mail é único por usuário. Quando o mesmo e-mail está
+  // em mais de um funcionário (comum: e-mail genérico da empresa), manda o
+  // e-mail técnico pelo CPF — senão a API recusa (ou, nas versões antigas,
+  // sobrescrevia a conta do outro funcionário que já tinha esse e-mail).
+  let emailMobile = String(func.email || '').trim();
+  if (emailMobile) {
+    const [compartilhado] = await query(
+      'SELECT id FROM funcionarios WHERE email = ? AND id != ? LIMIT 1',
+      [emailMobile, func.id],
+    );
+    if (compartilhado) emailMobile = '';
+  }
+
   const body = {
     nome: func.nome,
     cpf: cpfClean,
     empresa_id: mobileEmpresaId,
-    email: func.email || `${cpfClean}@pontomobile.local`,
+    email: emailMobile || `${cpfClean}@pontomobile.local`,
     ativo: func.ativo === 1,
     admin: func.admin_ponto_mobile === 1 ? 'S' : 'N',
     ...(mobileLotacaoId != null ? { lotacao_id: mobileLotacaoId } : {}),
@@ -329,7 +349,11 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
 
       const senhas = [...new Set([senhaMobile, cpfClean.substring(0, 6), cpfClean])];
       mobileId = await _resolverMobileIdPorCpf(cpfClean, senhas);
-      if (!mobileId) throw new Error(`Funcionário já existe no mobile mas não foi possível descobrir o ID. CPF: ${cpfClean}`);
+      if (!mobileId) {
+        const e = new Error(`Funcionário já existe no mobile mas não foi possível descobrir o ID. CPF: ${cpfClean}`);
+        e.statusCode = 409;
+        throw e;
+      }
 
       // Atualiza dados no mobile agora que temos o ID — a senha que ele já usa
       // no app (achada no login acima) fica como está.
@@ -347,11 +371,13 @@ export async function syncFuncionario(funcionarioId, { mobileEmpresaId: cachedEm
       [mobileId, funcionarioId],
     );
     if (conflito) {
-      throw new Error(
+      const e = new Error(
         `Este funcionário já está vinculado no mobile ao mesmo cadastro de "${conflito.nome}" ` +
-        `(id ${conflito.id}, pontomobile_id ${mobileId}). Confira CPF duplicado ou cadastro repetido ` +
+        `(id ${conflito.id}, pontomobile_id ${mobileId}). Confira CPF ou e-mail duplicado ` +
         `antes de sincronizar — as batidas dos dois ficariam misturadas.`,
       );
+      e.statusCode = 409;
+      throw e;
     }
 
     await query('UPDATE funcionarios SET pontomobile_id = ? WHERE id = ?', [mobileId, funcionarioId]);
