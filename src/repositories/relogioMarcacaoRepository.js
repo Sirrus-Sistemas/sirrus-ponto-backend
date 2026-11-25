@@ -202,6 +202,21 @@ export const RelogioMarcacaoRepository = {
   },
 
   /**
+   * Data e hora (texto "AAAA-MM-DD HH:MM:SS", hora local pura, sem fuso) da
+   * marcação mais recente já vista deste relógio, ou null se nenhuma ainda —
+   * usada pela tela de comunicação pra mostrar ao admin até quando a
+   * sincronização automática está realmente chegando.
+   */
+  async ultimaMarcacaoEm(relogioId) {
+    const rows = await query(
+      `SELECT DATE_FORMAT(MAX(data_hora), '%Y-%m-%d %H:%i:%s') AS ultima_marcacao
+         FROM relogio_marcacoes_importadas WHERE relogio_id = ?`,
+      [relogioId],
+    );
+    return rows[0]?.ultima_marcacao ?? null;
+  },
+
+  /**
    * Leitura das marcações brutas de um relógio, em ordem de NSR, a partir de
    * um NSR (exclusivo) — para um sistema externo (Sirrus Ponto Coletor/Velox)
    * consumir as batidas coletadas pelo Sync. Devolve tudo, vinculado ou não:

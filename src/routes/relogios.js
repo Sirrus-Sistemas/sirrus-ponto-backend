@@ -6,6 +6,7 @@ import { RelogioSyncRepository } from '../repositories/relogioSyncRepository.js'
 import { RelogioMarcacaoRepository } from '../repositories/relogioMarcacaoRepository.js';
 import { FuncionarioRepository } from '../repositories/funcionarioRepository.js';
 import { parseAfd, chaveParaModelo } from '../utils/afdParser.js';
+import { auditar } from '../services/auditService.js';
 
 const MODELOS_VALIDOS = [
   'arquivo_afd', 'control_id', 'control_id_class', 'control_id_class_671',
@@ -125,6 +126,41 @@ export default async function relogiosRoutes(fastify) {
   fastify.get('/relogios/saude', { preHandler: [authorize('admin')] }, async (request) => {
     const saude = await RelogioSyncRepository.getSaude(request.empresaId);
     return successResponse(saude);
+  });
+
+  // ── POST /api/relogios/:id/forcar-sincronizacao  (botão "Forçar
+  // sincronização" da tela de comunicação)
+  //
+  // Não existe um canal pra mandar comando nenhum pro Sirrus Ponto Sync —
+  // ele roda dentro da rede do cliente e só fala com a API por iniciativa
+  // própria (heartbeat a cada poucos minutos). Então isso não força nada de
+  // verdade: devolve na hora um diagnóstico com o que já foi recebido
+  // (heartbeat + última marcação importada), que é o que realmente resolve
+  // a necessidade por trás do pedido — saber se está tudo bem sem precisar
+  // ligar pro suporte. Fica registrado em audit_log quem e quando pediu.
+  fastify.post('/relogios/:id/forcar-sincronizacao', { preHandler: [authorize('admin')] }, async (request, reply) => {
+    const id = Number(request.params.id);
+    const relogio = await RelogioRepository.findById(id, request.empresaId);
+    if (!relogio) return reply.code(404).send({ message: 'Relógio não encontrado.' });
+
+    const [saude, ultimaMarcacao] = await Promise.all([
+      RelogioSyncRepository.getSaude(request.empresaId),
+      RelogioMarcacaoRepository.ultimaMarcacaoEm(id),
+    ]);
+
+    const resultado = diagnosticarComunicacao(relogio, saude, ultimaMarcacao);
+
+    auditar({
+      acao: 'forcar_sincronizacao',
+      tabela: 'relogios_ponto',
+      registro_id: id,
+      dados_novos: resultado,
+      usuario_id: request.user.id,
+      empresa_id: request.empresaId,
+      ip: request.ip,
+    });
+
+    return successResponse(resultado, resultado.mensagem);
   });
 
   // ══════════════════════════════════════════════════════════════════
@@ -441,4 +477,70 @@ export default async function relogiosRoutes(fastify) {
     if (!removed) return reply.code(404).send({ message: 'Item não encontrado na fila.' });
     return successResponse(null, 'Item removido da fila.');
   });
+}
+
+// Tolerância antes de considerar o sistema de coleta "sem resposta" — bem
+// acima do intervalo padrão de sincronização (2 min) pra não acusar falha
+// por causa de uma oscilação normal de rede entre um heartbeat e outro.
+const HEARTBEAT_TOLERANCIA_MINUTOS = 10;
+
+/**
+ * Diagnóstico instantâneo de comunicação de um relógio, a partir do que já
+ * foi recebido (heartbeat do sistema de coleta + última marcação
+ * importada) — usado por POST /relogios/:id/forcar-sincronizacao.
+ */
+function diagnosticarComunicacao(relogio, saude, ultimaMarcacao) {
+  if (relogio.usa_afd) {
+    return {
+      saudavel: null,
+      mensagem: 'Este relógio é coletado por arquivo AFD (pen drive), não por sincronização automática — não há comunicação contínua para verificar.',
+    };
+  }
+
+  if (!saude || !saude.recebido_em) {
+    return {
+      saudavel: false,
+      mensagem: 'Nunca recebemos nenhum sinal do Sirrus Ponto Sync para esta empresa. Verifique se ele está instalado e em execução em algum computador com acesso à rede do relógio.',
+    };
+  }
+
+  const minutosDesdeHeartbeat = (Date.now() - new Date(saude.recebido_em).getTime()) / 60000;
+  if (minutosDesdeHeartbeat > HEARTBEAT_TOLERANCIA_MINUTOS) {
+    return {
+      saudavel: false,
+      mensagem: `O Sirrus Ponto Sync não responde há ${Math.round(minutosDesdeHeartbeat)} minutos. Verifique se o computador onde ele está instalado está ligado e conectado à internet — pode ser necessário reiniciá-lo.`,
+    };
+  }
+
+  const relogios = Array.isArray(saude.relogios) ? saude.relogios : [];
+  const itemRelogio = relogios.find((r) => Number(r?.id) === relogio.id);
+  if (!itemRelogio) {
+    return {
+      saudavel: false,
+      mensagem: 'O sistema de coleta está ativo, mas ainda não reportou nada sobre este relógio especificamente. Verifique se ele está marcado para ser coletado nesta instalação.',
+    };
+  }
+
+  if (itemRelogio.status === 'erro') {
+    return {
+      saudavel: false,
+      mensagem: `O sistema de coleta está ativo, mas este relógio reportou um problema: ${itemRelogio.erro || 'motivo não informado'}.`,
+    };
+  }
+
+  const mensagemMarcacao = ultimaMarcacao
+    ? `Última marcação recebida em ${formatarDataHoraBR(ultimaMarcacao)}.`
+    : 'Nenhuma marcação recebida ainda deste relógio.';
+
+  return {
+    saudavel: true,
+    mensagem: `Comunicação ativa — o sistema sincroniza automaticamente a cada poucos minutos. ${mensagemMarcacao}`,
+  };
+}
+
+/** "AAAA-MM-DD HH:MM:SS" → "DD/MM/AAAA HH:MM", pro texto do diagnóstico. */
+function formatarDataHoraBR(dataHoraStr) {
+  const [data, hora] = dataHoraStr.split(' ');
+  const [ano, mes, dia] = data.split('-');
+  return `${dia}/${mes}/${ano} ${hora.slice(0, 5)}`;
 }
