@@ -147,7 +147,7 @@ export async function salvarEscala(funcionarioId, geradoPor, dias, tipoCiclo, in
     const dataFim = dias[dias.length - 1].data;
 
     const [manuais] = await conn.execute(
-      'SELECT DATE_FORMAT(data, "%Y-%m-%d") AS data FROM escalas WHERE funcionario_id = ? AND data BETWEEN ? AND ? AND ajustado_manual = 1',
+      "SELECT DATE_FORMAT(data, '%Y-%m-%d') AS data FROM escalas WHERE funcionario_id = ? AND data BETWEEN ? AND ? AND ajustado_manual = 1",
       [funcionarioId, dataInicio, dataFim],
     );
     const datasManuais = new Set(manuais.map((r) => r.data));
@@ -208,8 +208,11 @@ export async function buscarPorPeriodo(funcionarioId, dataInicio, dataFim) {
 }
 
 /**
- * Lista funcionários ativos para a tela de geração de escala.
- * Inclui todos os funcionários ativos — ao salvar a escala, usa_escala é ativado automaticamente.
+ * Lista funcionários para a tela de geração/ajuste de escala. Só quem tem o
+ * toggle "usa escala" ligado no cadastro — quem usa presença regular
+ * (seg-sáb automático) não aparece aqui nem pra poluir a lista nem pra gerar
+ * escala por engano. Pra começar a usar escala pela primeira vez, liga o
+ * toggle no Cadastro do funcionário antes.
  */
 export async function listarFuncionariosComEscala(empresaId, filialId) {
   let sql = `
@@ -225,7 +228,7 @@ export async function listarFuncionariosComEscala(empresaId, filialId) {
     LEFT JOIN departamentos d ON f.departamento_id = d.id
     LEFT JOIN lotacoes lo ON f.lotacao_id = lo.id
     LEFT JOIN turnos t ON f.turno_id = t.id
-    WHERE f.empresa_id = ? AND f.ativo = 1 AND f.controla_ponto = 1
+    WHERE f.empresa_id = ? AND f.ativo = 1 AND f.controla_ponto = 1 AND f.usa_escala = 1
   `;
   const params = [empresaId];
 
