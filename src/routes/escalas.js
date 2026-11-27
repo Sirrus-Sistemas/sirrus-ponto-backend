@@ -259,6 +259,103 @@ export default async function escalasRoutes(fastify) {
     return reply.code(201).send({ success: true, total, message: `${total} dias gravados` });
   });
 
+  // ─── POST /escalas/ajuste ──────────────────────────────────────────
+  // Ajuste pontual de UM dia já salvo (ex.: trocar folga↔trabalho na tela
+  // de "Ajustar escala"). Não gera dias novos — só atualiza um registro
+  // existente em `escalas`.
+  fastify.post('/escalas/ajuste', {
+    preHandler: [authorize('admin', 'gestor')],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['funcionario_id', 'data', 'tipo'],
+        properties: {
+          funcionario_id: { type: 'integer' },
+          data: { type: 'string', format: 'date' },
+          tipo: { type: 'string', enum: ['trabalho', 'folga'] },
+          entrada1: { type: 'string' },
+          saida1:   { type: 'string' },
+          entrada2: { type: 'string' },
+          saida2:   { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { funcionario_id, data, tipo, entrada1, saida1, entrada2, saida2 } = request.body;
+
+    const [func] = await query(
+      `SELECT f.id, t.entrada, t.saida_intervalo, t.retorno_intervalo, t.saida
+         FROM funcionarios f
+         LEFT JOIN turnos t ON t.id = f.turno_id
+        WHERE f.id = ? AND f.empresa_id = ?`,
+      [funcionario_id, request.empresaId],
+    );
+    if (!func) return reply.code(404).send({ error: 'Funcionário não encontrado' });
+
+    const [diaAnterior] = await query(
+      'SELECT * FROM escalas WHERE funcionario_id = ? AND data = ?',
+      [funcionario_id, data],
+    );
+    if (!diaAnterior) {
+      return reply.code(404).send({ error: 'Este dia não faz parte de nenhuma escala salva para este funcionário.' });
+    }
+
+    let novo;
+    if (tipo === 'folga') {
+      novo = {
+        tipo: 'folga',
+        entrada1: null, saida1: null, entrada2: null, saida2: null,
+        entrada3: null, saida3: null, entrada4: null, saida4: null,
+        fim_noturno: null,
+      };
+    } else {
+      // Sem horário informado: usa o horário cadastrado do turno do
+      // funcionário (mesma lógica de gerarDiasDeTurno) em vez de deixar o
+      // dia marcado "trabalho" sem entrada/saída nenhuma.
+      const semIntervalo = !func.saida_intervalo || !func.retorno_intervalo
+        || func.saida_intervalo === func.retorno_intervalo;
+      const horarioTurno = semIntervalo
+        ? { entrada1: func.entrada, saida1: func.saida, entrada2: null, saida2: null }
+        : { entrada1: func.entrada, saida1: func.saida_intervalo, entrada2: func.retorno_intervalo, saida2: func.saida };
+
+      novo = {
+        tipo: 'trabalho',
+        entrada1: entrada1 || diaAnterior.entrada1 || horarioTurno.entrada1 || null,
+        saida1:   saida1   || diaAnterior.saida1   || horarioTurno.saida1   || null,
+        entrada2: entrada2 || diaAnterior.entrada2 || horarioTurno.entrada2 || null,
+        saida2:   saida2   || diaAnterior.saida2   || horarioTurno.saida2   || null,
+        entrada3: diaAnterior.entrada3, saida3: diaAnterior.saida3,
+        entrada4: diaAnterior.entrada4, saida4: diaAnterior.saida4,
+        fim_noturno: diaAnterior.fim_noturno,
+      };
+    }
+
+    await query(
+      `UPDATE escalas SET tipo = ?, entrada1 = ?, saida1 = ?, entrada2 = ?, saida2 = ?,
+              entrada3 = ?, saida3 = ?, entrada4 = ?, saida4 = ?, fim_noturno = ?,
+              ajustado_manual = 1
+        WHERE funcionario_id = ? AND data = ?`,
+      [
+        novo.tipo, novo.entrada1, novo.saida1, novo.entrada2, novo.saida2,
+        novo.entrada3, novo.saida3, novo.entrada4, novo.saida4, novo.fim_noturno,
+        funcionario_id, data,
+      ],
+    );
+
+    auditar({
+      acao: 'ajuste_dia',
+      tabela: 'escalas',
+      registro_id: `${funcionario_id}-${data}`,
+      dados_anteriores: diaAnterior,
+      dados_novos: novo,
+      usuario_id: request.user.id,
+      empresa_id: request.empresaId,
+      ip: request.ip,
+    });
+
+    return { success: true };
+  });
+
   // ─── DELETE /escalas?funcionario_id=&inicio=&fim= ─────────────────
   fastify.delete('/escalas', {
     preHandler: [authorize('admin', 'gestor')],

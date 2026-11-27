@@ -132,19 +132,32 @@ export async function gerarDiasDeTurno({ dataInicio, dataFim, turnoId }) {
 
 /**
  * Persiste (upsert) os dias gerados na tabela escalas.
- * Substitui qualquer registro existente para o mesmo funcionário/data.
+ * Substitui qualquer registro existente para o mesmo funcionário/data —
+ * EXCETO dias marcados `ajustado_manual` (editados a dedo em "Ajustar
+ * escala"), que ficam de fora do regenerar para não perder o ajuste.
  * Ativa automaticamente usa_escala = 1 para o funcionário.
  */
 export async function salvarEscala(funcionarioId, geradoPor, dias, tipoCiclo, inicioCiclo) {
   if (!dias.length) return 0;
 
+  let totalGravado = 0;
+
   await transaction(async (conn) => {
-    // Remove os dias do período para fazer upsert limpo
     const dataInicio = dias[0].data;
     const dataFim = dias[dias.length - 1].data;
+
+    const [manuais] = await conn.execute(
+      'SELECT DATE_FORMAT(data, "%Y-%m-%d") AS data FROM escalas WHERE funcionario_id = ? AND data BETWEEN ? AND ? AND ajustado_manual = 1',
+      [funcionarioId, dataInicio, dataFim],
+    );
+    const datasManuais = new Set(manuais.map((r) => r.data));
+
+    // Remove só os dias que NÃO foram ajustados manualmente, para fazer
+    // upsert limpo deles sem tocar nos preservados.
     await conn.execute(
-      'DELETE FROM escalas WHERE funcionario_id = ? AND data BETWEEN ? AND ?',
-      [funcionarioId, dataInicio, dataFim]
+      `DELETE FROM escalas
+        WHERE funcionario_id = ? AND data BETWEEN ? AND ? AND ajustado_manual = 0`,
+      [funcionarioId, dataInicio, dataFim],
     );
 
     // Ativa o modo escala para o funcionário caso ainda não esteja ativo
@@ -163,16 +176,18 @@ export async function salvarEscala(funcionarioId, geradoPor, dias, tipoCiclo, in
     `;
 
     for (const d of dias) {
+      if (datasManuais.has(d.data)) continue;
       await conn.execute(sql, [
         funcionarioId, d.data, d.tipo,
         d.entrada1, d.saida1, d.entrada2, d.saida2,
         d.entrada3, d.saida3, d.entrada4, d.saida4,
         d.fim_noturno, geradoPor, tipoCiclo || null, inicioCiclo || null,
       ]);
+      totalGravado++;
     }
   });
 
-  return dias.length;
+  return totalGravado;
 }
 
 /**
